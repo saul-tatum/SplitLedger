@@ -1,0 +1,1772 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>SplitLedger</title>
+<link rel="icon" href="data:,">
+<script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+<script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+<script src="https://unpkg.com/prop-types@15/prop-types.min.js"></script>
+<script src="https://unpkg.com/papaparse@5.4.1/papaparse.min.js"></script>
+<script src="https://unpkg.com/recharts@2.12.7/umd/Recharts.js"></script>
+<script src="https://unpkg.com/@babel/standalone@7/babel.min.js"></script>
+<style>html,body{margin:0;background:#F7F8F5}#root{min-height:100vh}</style>
+</head>
+<body>
+<div id="root"><div style="padding:40px;font-family:sans-serif;color:#66756D">Loading SplitLedger…</div></div>
+<script type="text/babel" data-type="module" data-presets="react">
+const { useState, useEffect, useMemo } = React;
+const Papa = window.Papa;
+const { ResponsiveContainer, LineChart, Line, AreaChart, Area, XAxis, YAxis, Tooltip, ReferenceLine } = Recharts;
+
+/* ============================ styles ============================ */
+const CSS = `
+@import url('https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:wght@500;700;800&family=Public+Sans:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600&display=swap');
+:root{
+  --ink:#16302B; --paper:#F7F8F5; --panel:#FFFFFF; --line:#E3E7E1;
+  --green:#2E7D5B; --green-soft:#E4F0EA; --gold:#C9A227; --gold-soft:#F6EFDA;
+  --coral:#D9604F; --coral-soft:#F9E6E2; --muted:#66756D;
+}
+.bgt *{box-sizing:border-box;margin:0}
+.bgt{font-family:'Public Sans',sans-serif;color:var(--ink);background:var(--paper);min-height:100vh;padding-bottom:56px}
+.bgt .mono{font-family:'IBM Plex Mono',monospace;font-variant-numeric:tabular-nums}
+.bgt h1,.bgt h2,.bgt h3{font-family:'Bricolage Grotesque',sans-serif}
+.bgt .wrap{max-width:880px;margin:0 auto;padding:0 16px}
+.bgt header{background:var(--ink);color:#F2F5F0;padding:18px 0 0}
+.bgt .brand{display:flex;justify-content:space-between;align-items:baseline;gap:12px;flex-wrap:wrap}
+.bgt .brand h1{font-size:22px;font-weight:800;letter-spacing:-.02em}
+.bgt .brand h1 span{color:var(--gold)}
+.bgt .income-chip{font-size:13px;color:#C7D4CC}
+.bgt .income-chip b{color:#fff;font-weight:600}
+.bgt .monthnav{display:flex;align-items:center;gap:8px;margin:10px 0 12px}
+.bgt .monthnav h2{font-size:17px;font-weight:700;min-width:150px;text-align:center}
+.bgt .monthnav button{background:rgba(255,255,255,.12);border:none;color:#fff;width:30px;height:30px;border-radius:8px;cursor:pointer;font-size:15px}
+.bgt .tabs{display:flex;gap:2px;overflow-x:auto}
+.bgt .tabs button{background:transparent;border:none;color:#AEBFB5;padding:10px 14px;font:600 13.5px 'Public Sans',sans-serif;cursor:pointer;border-radius:10px 10px 0 0;white-space:nowrap}
+.bgt .tabs button.on{background:var(--paper);color:var(--ink)}
+.bgt main{padding:20px 0}
+.bgt .card{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:16px;margin-bottom:14px}
+.bgt .card h3{font-size:15px;font-weight:700;margin-bottom:10px}
+.bgt .sub{color:var(--muted);font-size:12.5px}
+.bgt .row{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
+.bgt .grow{flex:1}
+/* split ledger bar (signature) */
+.bgt .split{display:flex;height:46px;border-radius:10px;overflow:hidden;border:1px solid var(--line)}
+.bgt .seg{position:relative;background:var(--paper)}
+.bgt .seg+.seg{border-left:2px solid #fff}
+.bgt .seg .fill{position:absolute;left:0;top:0;bottom:0;opacity:.9;transition:width .5s ease}
+@media (prefers-reduced-motion:reduce){.bgt .seg .fill{transition:none}}
+.bgt .seg .tag{position:absolute;left:6px;top:4px;font-size:10px;font-weight:700;color:var(--ink);z-index:1;white-space:nowrap;overflow:hidden;max-width:calc(100% - 8px)}
+.bgt .legend{display:flex;gap:14px;flex-wrap:wrap;margin-top:10px}
+.bgt .legend .li{display:flex;align-items:center;gap:6px;font-size:12px;color:var(--muted)}
+.bgt .dot{width:9px;height:9px;border-radius:3px;display:inline-block}
+/* category cards */
+.bgt .catgrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(230px,1fr));gap:12px}
+.bgt .catcard{border:1px solid var(--line);border-radius:12px;padding:12px;background:var(--panel)}
+.bgt .catcard .nm{font-weight:700;font-size:13.5px;display:flex;align-items:center;gap:7px}
+.bgt .catcard .amt{font-size:19px;font-weight:600;margin:6px 0 2px}
+.bgt .bar{height:7px;border-radius:5px;background:var(--paper);overflow:hidden;margin-top:8px;border:1px solid var(--line)}
+.bgt .bar i{display:block;height:100%}
+.bgt .over{color:var(--coral)}
+/* weekly table */
+.bgt table{width:100%;border-collapse:collapse;font-size:13px}
+.bgt th{text-align:left;color:var(--muted);font-weight:600;font-size:11.5px;text-transform:uppercase;letter-spacing:.04em;padding:6px 8px;border-bottom:1px solid var(--line)}
+.bgt td{padding:8px;border-bottom:1px solid var(--line)}
+.bgt tr.now td{background:var(--green-soft)}
+.bgt tr:last-child td{border-bottom:none}
+/* inputs & buttons */
+.bgt input,.bgt select{font:500 14px 'Public Sans',sans-serif;color:var(--ink);background:#fff;border:1px solid var(--line);border-radius:9px;padding:9px 11px;width:100%}
+.bgt input:focus-visible,.bgt select:focus-visible,.bgt button:focus-visible{outline:2px solid var(--green);outline-offset:1px}
+.bgt .btn{background:var(--green);color:#fff;border:none;border-radius:9px;padding:10px 16px;font:600 14px 'Public Sans',sans-serif;cursor:pointer}
+.bgt .btn.gold{background:var(--gold)}
+.bgt .btn.ghost{background:#fff;color:var(--ink);border:1px solid var(--line)}
+.bgt .btn.sm{padding:6px 10px;font-size:12.5px}
+.bgt .btn:disabled{opacity:.5;cursor:default}
+.bgt .chips{display:flex;gap:6px;flex-wrap:wrap}
+.bgt .chip{border:1px solid var(--line);background:#fff;border-radius:99px;padding:6px 12px;font:600 12.5px 'Public Sans',sans-serif;cursor:pointer;color:var(--ink)}
+.bgt .chip.on{background:var(--ink);color:#fff;border-color:var(--ink)}
+.bgt .biginput{font-family:'IBM Plex Mono',monospace;font-size:26px;font-weight:600;padding:12px;text-align:center}
+.bgt .txn{display:flex;align-items:center;gap:8px;padding:9px 0;border-bottom:1px solid var(--line);flex-wrap:wrap}
+.bgt .txn:last-child{border-bottom:none}
+.bgt .txn .d{font-size:11.5px;color:var(--muted);width:46px;flex-shrink:0}
+.bgt .txn .n{flex:1;font-size:13.5px;font-weight:500;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.bgt .txn select{width:auto;padding:4px 6px;font-size:12px}
+.bgt .txn .a{font-size:13.5px;font-weight:600}
+.bgt .x{background:none;border:none;color:var(--muted);cursor:pointer;font-size:15px;padding:2px 6px}
+.bgt .insight{border-left:4px solid var(--green);border-radius:8px;background:var(--panel);border:1px solid var(--line);border-left-width:4px;padding:11px 13px;margin-bottom:9px;font-size:13.5px}
+.bgt .insight.warn{border-left-color:var(--coral)}
+.bgt .insight.gold{border-left-color:var(--gold)}
+.bgt .ai-out{white-space:pre-wrap;font-size:13.5px;line-height:1.6}
+.bgt .goal{border:1px solid var(--line);border-radius:12px;padding:14px;margin-bottom:12px;background:var(--panel)}
+.bgt .err{color:var(--coral);font-size:12.5px}
+.bgt .ok{color:var(--green);font-size:12.5px}
+.bgt .filedrop{border:2px dashed var(--line);border-radius:12px;padding:22px;text-align:center;color:var(--muted);font-size:13px}
+.bgt label{font-size:12px;font-weight:600;color:var(--muted);display:block;margin-bottom:4px}
+
+.bgt .bar2{display:flex;height:9px;border-radius:5px;overflow:hidden;background:var(--paper);border:1px solid var(--line);margin-top:8px}
+.bgt .bar2 i{display:block;height:100%}
+.bgt .holding{display:inline-flex;align-items:center;gap:5px;border:1px solid var(--line);background:#fff;border-radius:99px;padding:3px 4px 3px 10px;font:600 12px 'IBM Plex Mono',monospace;margin:0 6px 6px 0}
+.bgt .holding .x{font-size:12px;padding:0 4px}
+.bgt .typeswitch{display:flex;gap:6px;margin-bottom:12px}
+.bgt .report-meta{font-size:11.5px;color:var(--muted)}
+.bgt .overlay{position:fixed;inset:0;background:rgba(22,48,43,.45);display:flex;align-items:center;justify-content:center;z-index:50;padding:16px}
+.bgt .modal{background:#fff;border-radius:14px;padding:18px;max-width:560px;width:100%;max-height:86vh;overflow-y:auto;border:1px solid var(--line)}
+.bgt .charts{display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-top:12px}
+@media (max-width:640px){.bgt .charts{grid-template-columns:1fr}}
+.bgt .chartbox{border:1px solid var(--line);border-radius:10px;padding:10px 6px 4px}
+.bgt .chartbox h4{font:600 11px 'Public Sans',sans-serif;color:var(--muted);text-transform:uppercase;letter-spacing:.04em;margin:0 0 4px 8px}
+.bgt .chip.sm{padding:4px 9px;font-size:11.5px}
+.bgt .holding{cursor:pointer}
+.bgt .statgrid{display:grid;grid-template-columns:repeat(auto-fit,minmax(110px,1fr));gap:10px;margin:10px 0}
+.bgt .stat{border:1px solid var(--line);border-radius:9px;padding:8px 10px}
+.bgt .stat .k{font-size:10.5px;color:var(--muted);text-transform:uppercase;letter-spacing:.04em}
+.bgt .stat .v{font-size:15px;font-weight:600;margin-top:2px}
+.bgt .sumrow{display:flex;align-items:center;gap:10px;cursor:pointer;flex-wrap:wrap}
+.bgt .chev{color:var(--muted);font-size:11px;transition:transform .15s;display:inline-block}
+.bgt .chev.open{transform:rotate(90deg)}
+@media (prefers-reduced-motion:reduce){.bgt .chev{transition:none}}
+.bgt .dim{opacity:.45}
+.bgt .x.armdel{color:var(--coral);font-weight:700;font-size:11px;white-space:nowrap}
+.bgt .minibar{height:5px;border-radius:4px;background:var(--paper);border:1px solid var(--line);overflow:hidden;width:90px;display:inline-block;vertical-align:middle}
+.bgt .minibar i{display:block;height:100%;background:var(--green)}
+.bgt .proposal{border:1px solid var(--line);border-radius:10px;padding:10px 12px;margin-bottom:8px;display:flex;gap:10px;align-items:center;flex-wrap:wrap;font-size:13px}
+.bgt .divrow td{padding:5px 8px;border-bottom:none}
+`;
+
+/* ============================ helpers ============================ */
+const USD = new Intl.NumberFormat("en-US", { style: "currency", currency: "USD" });
+const fmt = (n) => USD.format(Number.isFinite(n) ? n : 0);
+const pad = (n) => String(n).padStart(2, "0");
+const monthKeyOf = (d) => `${d.getFullYear()}-${pad(d.getMonth() + 1)}`;
+const MONTHS = ["January","February","March","April","May","June","July","August","September","October","November","December"];
+const monthLabel = (ym) => { const [y, m] = ym.split("-").map(Number); return `${MONTHS[m - 1]} ${y}`; };
+const daysIn = (ym) => { const [y, m] = ym.split("-").map(Number); return new Date(y, m, 0).getDate(); };
+const shiftMonth = (ym, delta) => { const [y, m] = ym.split("-").map(Number); const d = new Date(y, m - 1 + delta, 1); return monthKeyOf(d); };
+const uid = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 7);
+const normMerchant = (s) =>
+  String(s || "").toUpperCase().replace(/[^A-Z ]/g, " ").replace(/\s+/g, " ").trim().split(" ").slice(0, 2).join(" ");
+const DEFAULT_SUBCATS = [
+  { id: "groceries", name: "Groceries" }, { id: "restaurants", name: "Restaurants" },
+  { id: "gas", name: "Gas" }, { id: "shopping", name: "Shopping" },
+  { id: "utilities", name: "Utilities" }, { id: "housing", name: "Rent / Mortgage" },
+  { id: "entertainment", name: "Entertainment" }, { id: "subscriptions", name: "Subscriptions" },
+  { id: "health", name: "Health" }, { id: "travel", name: "Travel" }, { id: "other", name: "Other" },
+];
+const HOLD_TYPES = { HYSA: 4, Brokerage: 7, Cash: 0 }; // default annual growth %
+const PALETTE = ["#2E7D5B","#C9A227","#4A6FA5","#8C5B8F","#B5651D","#4E8098","#7A9A3B","#A5554E","#5B5EA6","#946B54"];
+
+function weeksOf(ym) {
+  // Calendar weeks, Sunday through Saturday
+  const [y, m] = ym.split("-").map(Number);
+  const total = daysIn(ym);
+  const firstDow = new Date(y, m - 1, 1).getDay(); // 0 = Sunday
+  const weeks = [];
+  let start = 1;
+  let end = Math.min(1 + (6 - firstDow), total);
+  while (start <= total) {
+    weeks.push({ label: `Week ${weeks.length + 1}`, start, end });
+    start = end + 1;
+    end = Math.min(start + 6, total);
+  }
+  return weeks;
+}
+const todayStr = () => { const d = new Date(); return `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())}`; };
+
+const clamp2 = (n) => Math.round(n * 100) / 100;
+const monthShort = (ym) => MONTHS[Number(ym.slice(5, 7)) - 1].slice(0, 3) + " '" + ym.slice(2, 4);
+function downloadJSON(obj, filename) {
+  // Best-effort download; sandboxed frames often block this, so callers must have a text fallback.
+  try {
+    const blob = new Blob([JSON.stringify(obj, null, 1)], { type: "application/json" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url; a.download = filename; a.rel = "noopener";
+    document.body.appendChild(a);
+    a.click();
+    setTimeout(() => { document.body.removeChild(a); URL.revokeObjectURL(url); }, 4000);
+    return true;
+  } catch { return false; }
+}
+const IGNORE_RX = /PAYMENT|PYMT|AUTOPAY|THANK YOU|TRANSFER/i;
+function ConfirmX({ onConfirm, label }) {
+  const [armed, setArmed] = useState(false);
+  useEffect(() => {
+    if (!armed) return;
+    const t = setTimeout(() => setArmed(false), 2500);
+    return () => clearTimeout(t);
+  }, [armed]);
+  return (
+    <button className={"x" + (armed ? " armdel" : "")} onClick={() => (armed ? onConfirm() : setArmed(true))} aria-label={label}>
+      {armed ? "Sure?" : "✕"}
+    </button>
+  );
+}
+function resolveBuckets(pool) {
+  const balance = pool.balance || 0;
+  const buckets = pool.buckets || [];
+  const fixedTotal = buckets.filter((b) => b.alloc.mode === "amount").reduce((s, b) => s + b.alloc.value, 0);
+  const remainder = Math.max(balance - fixedTotal, 0);
+  const dollars = {};
+  buckets.forEach((b) => {
+    dollars[b.id] = b.alloc.mode === "amount" ? b.alloc.value : clamp2((remainder * b.alloc.value) / 100);
+  });
+  const allocated = Object.values(dollars).reduce((s, v) => s + v, 0);
+  return { dollars, allocated: clamp2(allocated), unallocated: clamp2(balance - allocated) };
+}
+/* ============================ standalone runtime ============================ */
+function profilePrefix(shared) {
+  return shared ? "sl:household:" : `sl:profile:${window.__ACTIVE_PROFILE__ || "default"}:`;
+}
+window.storage = {
+  async get(key, shared) {
+    const raw = localStorage.getItem(profilePrefix(shared) + key);
+    if (raw === null) throw new Error("not found");
+    return { key, value: raw, shared: !!shared };
+  },
+  async set(key, value, shared) {
+    localStorage.setItem(profilePrefix(shared) + key, value);
+    return { key, value, shared: !!shared };
+  },
+  async delete(key, shared) {
+    const k = profilePrefix(shared) + key;
+    const existed = localStorage.getItem(k) !== null;
+    localStorage.removeItem(k);
+    return { key, deleted: existed, shared: !!shared };
+  },
+  async list(prefix, shared) {
+    const pfx = profilePrefix(shared) + (prefix || "");
+    const base = profilePrefix(shared);
+    const keys = [];
+    for (let i = 0; i < localStorage.length; i++) {
+      const k = localStorage.key(i);
+      if (k.startsWith(pfx)) keys.push(k.slice(base.length));
+    }
+    return { keys, prefix, shared: !!shared };
+  },
+};
+function listProfiles() { try { return JSON.parse(localStorage.getItem("sl:profiles") || "[]"); } catch { return []; } }
+function saveProfiles(list) { localStorage.setItem("sl:profiles", JSON.stringify(list)); }
+
+async function loadKey(key, fallback) {
+  try {
+    const r = await window.storage.get(key, false);
+    return r && r.value ? JSON.parse(r.value) : fallback;
+  } catch { return fallback; }
+}
+async function saveKey(key, val) {
+  try { await window.storage.set(key, JSON.stringify(val), false); }
+  catch (e) { console.error("save failed:", key, e); }
+}
+
+
+
+
+/* ============================ app shell ============================ */
+function BudgetApp() {
+  const now = new Date();
+  const nowYM = monthKeyOf(now);
+  const [ready, setReady] = useState(false);
+  const [settings, setSettings] = useState(null);
+  const [pool, setPool] = useState({ balance: 0, rate: 4, contribs: [], buckets: [] });
+  const [rules, setRules] = useState({});
+  const [invest, setInvest] = useState({ accounts: [] });
+  const [report, setReport] = useState(null);
+  const [snapshots, setSnapshots] = useState({});
+  const [month, setMonth] = useState(nowYM);
+  const [txns, setTxns] = useState([]);
+  const [hist, setHist] = useState({}); // last 6 months of txns for trends/charts
+  const [tab, setTab] = useState("overview");
+
+  useEffect(() => {
+    (async () => {
+      const [s0, g0, r0, inv0, rep, p0, snap0] = await Promise.all([
+        loadKey("settings", null), loadKey("goals", []), loadKey("rules", {}),
+        loadKey("investments", { accounts: [] }), loadKey("investReport", null),
+        loadKey("pool", null), loadKey("snapshots", {}),
+      ]);
+      const s = s0 && !s0.subcats ? { ...s0, subcats: DEFAULT_SUBCATS } : s0;
+      const r = {};
+      Object.entries(r0).forEach(([k, v]) => { r[k] = typeof v === "string" ? { c: v, s: "" } : v; });
+      let inv = { ...inv0, accounts: (inv0.accounts || []).map((a) => ({
+        monthlyTarget: null, ...a,
+        holdings: (a.holdings || []).map((h) => ({ qty: 0, cost: 0, buyDate: null, sellDate: null, history: [], ...h })),
+      })) };
+      // ---- migrate v3 goals -> pool + invest accounts (one time) ----
+      let p = p0;
+      if (!p) {
+        const gs = g0.map((x) => x.type ? x : { ...x, type: "total", spent: x.spent || 0, contribs: x.contribs || [] });
+        const totals = gs.filter((x) => x.type === "total");
+        const monthlies = gs.filter((x) => x.type === "monthly");
+        p = {
+          balance: clamp2(totals.reduce((s2, x) => s2 + (x.saved || 0), 0)),
+          rate: (totals.find((x) => Number.isFinite(x.rate)) || {}).rate || 4,
+          contribs: totals.flatMap((x) => (x.contribs || []).map((c) => ({ id: uid(), date: c.date, amount: c.amount }))),
+          buckets: totals.map((x) => ({
+            id: x.id, name: x.name, target: x.target,
+            alloc: { mode: "amount", value: clamp2(x.saved || 0) },
+            spent: x.spent || 0, deadline: x.deadline || null, created: x.created || todayStr(),
+          })),
+        };
+        monthlies.forEach((mg) => {
+          const byYm = {};
+          (mg.contribs || []).forEach((c) => { const ym = c.date.slice(0, 7); byYm[ym] = clamp2((byYm[ym] || 0) + c.amount); });
+          let run = 0; const entries = {};
+          Object.keys(byYm).sort().forEach((ym) => { run = clamp2(run + byYm[ym]); entries[ym] = { contribution: byYm[ym], endBalance: run }; });
+          inv = { ...inv, accounts: [...inv.accounts, { id: uid(), name: mg.name, kind: "Other", startBalance: 0, monthlyTarget: mg.monthlyTarget || null, holdings: [], entries }] };
+        });
+        await saveKey("pool", p);
+        await saveKey("investments", inv);
+      }
+      // ---- silent monthly snapshot ----
+      let snaps = snap0;
+      if (s && !snaps[nowYM]) {
+        const prevKey = shiftMonth(nowYM, -1);
+        const prev = snaps[prevKey];
+        const rolloverIn = {};
+        if (s.rollover && prev) {
+          const prevTx = await loadKey(`txns:${prevKey}`, []);
+          const spent = {};
+          prevTx.forEach((t) => { if (!t.excluded) spent[t.catId] = (spent[t.catId] || 0) + t.amount; });
+          prev.categories.forEach((c) => {
+            if (c.id === s.savingsCatId) return;
+            const eff = ((prev.income + (prev.extra || 0)) * c.pct) / 100 + ((prev.rolloverIn || {})[c.id] || 0);
+            const un = eff - (spent[c.id] || 0);
+            if (un > 0) rolloverIn[c.id] = clamp2(un);
+          });
+        }
+        snaps = { ...snaps, [nowYM]: { income: s.income, categories: s.categories, extra: 0, rolloverIn } };
+        await saveKey("snapshots", snaps);
+      }
+      // ---- history: last 6 months ----
+      const h = {};
+      for (let i = 0; i < 6; i++) {
+        const ym = shiftMonth(nowYM, -i);
+        h[ym] = await loadKey(`txns:${ym}`, []);
+      }
+      setSettings(s); setPool(p); setRules(r); setInvest(inv); setReport(rep); setSnapshots(snaps); setHist(h);
+      if (!s) setTab("setup");
+      setReady(true);
+    })();
+  }, []);
+
+  useEffect(() => {
+    (async () => setTxns(hist[month] !== undefined ? hist[month] : await loadKey(`txns:${month}`, [])))();
+  }, [month, ready]); // eslint-disable-line
+
+  const persistTxns = async (next) => {
+    setTxns(next);
+    if (hist[month] !== undefined) setHist({ ...hist, [month]: next });
+    await saveKey(`txns:${month}`, next);
+  };
+  const persistPool = async (next) => { setPool(next); await saveKey("pool", next); };
+  const persistRules = async (next) => { setRules(next); await saveKey("rules", next); };
+  const persistInvest = async (next) => { setInvest(next); await saveKey("investments", next); };
+  const persistReport = async (next) => { setReport(next); await saveKey("investReport", next); };
+  const persistSnapshots = async (next) => { setSnapshots(next); await saveKey("snapshots", next); };
+  const persistSettings = async (next) => {
+    setSettings(next);
+    await saveKey("settings", next);
+    if (snapshots[nowYM]) {
+      const ns = { ...snapshots, [nowYM]: { ...snapshots[nowYM], income: next.income, categories: next.categories } };
+      await persistSnapshots(ns);
+    }
+  };
+
+  const addTxnsBulk = async (rows) => {
+    const buckets = {};
+    rows.forEach((t) => { const ym = t.date.slice(0, 7); (buckets[ym] = buckets[ym] || []).push(t); });
+    const histNext = { ...hist };
+    for (const ym of Object.keys(buckets)) {
+      const existing = ym === month ? txns : (hist[ym] !== undefined ? hist[ym] : await loadKey(`txns:${ym}`, []));
+      const merged = [...existing, ...buckets[ym]].sort((a, b) => (a.date < b.date ? 1 : -1));
+      await saveKey(`txns:${ym}`, merged);
+      if (histNext[ym] !== undefined) histNext[ym] = merged;
+      if (ym === month) setTxns(merged);
+    }
+    setHist(histNext);
+  };
+  const loadMonth = async (ym) => (ym === month ? txns : hist[ym] !== undefined ? hist[ym] : await loadKey(`txns:${ym}`, []));
+
+  const savingsCatId = settings ? settings.savingsCatId || null : null;
+  // budgets & categories for the viewed month come from its snapshot when one exists
+  const snap = snapshots[month];
+  const cats = snap ? snap.categories : (settings ? settings.categories : []);
+  const monthIncome = snap ? snap.income + (snap.extra || 0) : (settings ? settings.income : 0);
+  const budgets = useMemo(() => {
+    const m = {};
+    cats.forEach((c) => { m[c.id] = (monthIncome * c.pct) / 100 + ((snap && snap.rolloverIn) ? snap.rolloverIn[c.id] || 0 : 0); });
+    return m;
+  }, [cats, monthIncome, snap]);
+
+  const savingsByMonth = (ym) => {
+    let s = 0;
+    (pool.contribs || []).forEach((c) => { if (c.date && c.date.slice(0, 7) === ym) s += c.amount; });
+    (invest.accounts || []).forEach((a) => { const e = a.entries && a.entries[ym]; if (e && Number.isFinite(e.contribution)) s += e.contribution; });
+    return clamp2(s);
+  };
+  const savingsExtra = useMemo(() => savingsByMonth(month), [pool, invest, month]); // eslint-disable-line
+
+  const spentBy = useMemo(() => {
+    const m = {};
+    txns.forEach((t) => { if (!t.excluded) m[t.catId] = (m[t.catId] || 0) + t.amount; });
+    if (savingsCatId) m[savingsCatId] = (m[savingsCatId] || 0) + savingsExtra;
+    return m;
+  }, [txns, savingsCatId, savingsExtra]);
+
+  const setExtraIncome = async (ym, val) => {
+    if (!snapshots[ym]) return;
+    await persistSnapshots({ ...snapshots, [ym]: { ...snapshots[ym], extra: clamp2(val) } });
+  };
+
+  // ---- backup ----
+  const exportAll = async () => {
+    let txAll = {};
+    try {
+      const listed = await Promise.race([
+        window.storage.list("txns:", false),
+        new Promise((_, rej) => setTimeout(() => rej(new Error("timeout")), 4000)),
+      ]);
+      for (const k of (listed && listed.keys) || []) {
+        try { const r = await window.storage.get(k, false); if (r) txAll[k] = JSON.parse(r.value); } catch {}
+      }
+    } catch {
+      // list unavailable or slow — fall back to the months we already hold in memory
+      Object.keys(hist).forEach((ym) => { txAll[`txns:${ym}`] = hist[ym]; });
+      txAll[`txns:${month}`] = txns;
+    }
+    const payload = { version: 4, exported: todayStr(), settings, snapshots, pool, rules, investments: invest, investReport: report, transactions: txAll };
+    const text = JSON.stringify(payload, null, 1);
+    const downloaded = downloadJSON(payload, `splitledger-backup-${todayStr()}.json`);
+    return { text, downloaded };
+  };
+  const importAll = async (obj) => {
+    if (!obj || !obj.settings || !obj.transactions) throw new Error("That file doesn't look like a SplitLedger backup.");
+    await saveKey("settings", obj.settings); setSettings(obj.settings);
+    await saveKey("snapshots", obj.snapshots || {}); setSnapshots(obj.snapshots || {});
+    await saveKey("pool", obj.pool || { balance: 0, rate: 4, contribs: [], buckets: [] }); setPool(obj.pool || { balance: 0, rate: 4, contribs: [], buckets: [] });
+    await saveKey("rules", obj.rules || {}); setRules(obj.rules || {});
+    await saveKey("investments", obj.investments || { accounts: [] }); setInvest(obj.investments || { accounts: [] });
+    await saveKey("investReport", obj.investReport || null); setReport(obj.investReport || null);
+    const h = { ...hist };
+    for (const [k, v] of Object.entries(obj.transactions)) {
+      await saveKey(k, v);
+      const ym = k.slice(5);
+      if (h[ym] !== undefined) h[ym] = v;
+      if (ym === month) setTxns(v);
+    }
+    setHist(h);
+  };
+
+  const applyProposal = async (p) => {
+    if (!settings) return;
+    if (p.kind === "income" && p.value > 0) await persistSettings({ ...settings, income: clamp2(p.value) });
+    else if (p.kind === "categoryPct") {
+      const c = settings.categories.find((x) => x.name.toLowerCase() === String(p.catName || "").toLowerCase());
+      if (c && p.value >= 0 && p.value <= 100)
+        await persistSettings({ ...settings, categories: settings.categories.map((x) => x.id === c.id ? { ...x, pct: p.value } : x) });
+    } else if (p.kind === "poolRate" && p.value >= 0 && p.value < 30) await persistPool({ ...pool, rate: p.value });
+  };
+
+  if (!ready) return <div className="bgt"><style>{CSS}</style><div className="wrap" style={{padding:40}}><p className="sub">Opening your ledger…</p></div></div>;
+
+  const TABS = settings
+    ? [["overview","Overview"],["log","Log"],["goals","Goals"],["invest","Invest"],["insights","Insights"],["setup","Setup"]]
+    : [["setup","Setup"]];
+  const subcats = settings ? settings.subcats || [] : [];
+
+  return (
+    <div className="bgt">
+      <style>{CSS}</style>
+      <header>
+        <div className="wrap">
+          <div className="brand">
+            <h1>Split<span>Ledger</span></h1>
+            {settings && <div className="income-chip">Monthly income <b className="mono">{fmt(monthIncome)}</b></div>}
+          </div>
+          {settings && (
+            <div className="monthnav">
+              <button onClick={() => setMonth(shiftMonth(month, -1))} aria-label="Previous month">‹</button>
+              <h2>{monthLabel(month)}</h2>
+              <button onClick={() => setMonth(shiftMonth(month, 1))} aria-label="Next month">›</button>
+            </div>
+          )}
+          <nav className="tabs">
+            {TABS.map(([id, name]) => (
+              <button key={id} className={tab === id ? "on" : ""} onClick={() => setTab(id)}>{name}</button>
+            ))}
+          </nav>
+        </div>
+      </header>
+      <main>
+        <div className="wrap">
+          {tab === "overview" && settings && <Overview {...{cats, budgets, spentBy, txns, month, income: monthIncome, savingsCatId, subcats, hist, savingsByMonth, snap, setExtraIncome, nowYM}} />}
+          {tab === "log" && settings && <LogTab {...{cats, subcats, txns, persistTxns, rules, persistRules, addTxnsBulk, month, savingsCatId, loadMonth, nowYM}} />}
+          {tab === "goals" && settings && <PoolTab {...{pool, persistPool}} />}
+          {tab === "invest" && settings && <InvestTab {...{invest, persistInvest, report, persistReport, nowYM}} />}
+          {tab === "insights" && settings && <InsightsTab {...{cats, budgets, spentBy, txns, month, income: monthIncome, pool, savingsCatId, savingsExtra, subcats, hist, nowYM}} />}
+          {tab === "setup" && <SetupTab {...{settings, persistSettings, pool, invest, hist, nowYM, exportAll, importAll, applyProposal, onDone: () => setTab("overview")}} />}
+        </div>
+      </main>
+    </div>
+  );
+}
+
+/* ============================ overview ============================ */
+function Overview({ cats, budgets, spentBy, txns, month, income, savingsCatId, subcats, hist, savingsByMonth, snap, setExtraIncome, nowYM }) {
+  const totalSpent = cats.reduce((s, c) => s + (spentBy[c.id] || 0), 0);
+  const totalBudget = cats.reduce((s, c) => s + budgets[c.id], 0);
+  const weeks = weeksOf(month);
+  const today = new Date();
+  const isCurrent = nowYM === month;
+  const dayNow = today.getDate();
+  const live = txns.filter((t) => !t.excluded);
+  const weeklySpend = weeks.map((w) =>
+    live.reduce((s, t) => { const d = Number(t.date.slice(8, 10)); return d >= w.start && d <= w.end ? s + t.amount : s; }, 0)
+  );
+  const weeklyGuide = totalBudget / weeks.length;
+  const currentWeekIdx = isCurrent ? weeks.findIndex((w) => dayNow >= w.start && dayNow <= w.end) : -1;
+  const weeksLeft = isCurrent ? weeks.length - currentWeekIdx : 0;
+  const remaining = totalBudget - totalSpent;
+  const [extraIn, setExtraIn] = useState("");
+
+  // month-over-month chart
+  const [mode, setMode] = useState("overall");
+  const [pick, setPick] = useState("");
+  const histMonths = Object.keys(hist).sort();
+  const momData = histMonths.map((ym) => {
+    const rows = (ym === month ? txns : hist[ym] || []).filter((t) => !t.excluded);
+    let v = 0;
+    if (mode === "overall") {
+      v = rows.reduce((s, t) => s + t.amount, 0) + savingsByMonth(ym);
+    } else if (mode === "cat") {
+      v = rows.reduce((s, t) => s + (t.catId === pick ? t.amount : 0), 0);
+      if (pick === savingsCatId) v += savingsByMonth(ym);
+    } else {
+      v = rows.reduce((s, t) => s + (t.subId === pick ? t.amount : 0), 0);
+    }
+    return { m: monthShort(ym), v: clamp2(v) };
+  });
+
+  const bySub = useMemo(() => {
+    const m = {};
+    live.forEach((t) => { if (t.subId) m[t.subId] = (m[t.subId] || 0) + t.amount; });
+    return Object.entries(m)
+      .map(([id, v]) => ({ name: (subcats.find((s) => s.id === id) || { name: "Other" }).name, v }))
+      .sort((a, b) => b.v - a.v);
+  }, [txns, subcats]); // eslint-disable-line
+  const subMax = bySub.length ? bySub[0].v : 0;
+
+  return (
+    <>
+      <div className="card">
+        <h3>The split — plan vs. actual</h3>
+        <div className="split" role="img" aria-label="Budget split with spending fill per category">
+          {cats.map((c) => {
+            const w = totalBudget > 0 ? (budgets[c.id] / totalBudget) * 100 : 100 / cats.length;
+            const used = budgets[c.id] > 0 ? Math.min(((spentBy[c.id] || 0) / budgets[c.id]) * 100, 100) : 0;
+            const over = (spentBy[c.id] || 0) > budgets[c.id];
+            return (
+              <div key={c.id} className="seg" style={{ width: `${w}%` }}>
+                <span className="tag">{c.name} · {c.pct}%</span>
+                <div className="fill" style={{ width: `${used}%`, background: over ? "var(--coral)" : c.color }} />
+              </div>
+            );
+          })}
+        </div>
+        <div className="legend">
+          <span className="li mono">Spent {fmt(totalSpent)}</span>
+          <span className="li mono">Budget {fmt(totalBudget)}</span>
+          <span className={"li mono " + (remaining < 0 ? "over" : "")}>Left {fmt(remaining)}</span>
+          {income > totalBudget && <span className="li mono">Unallocated {fmt(income - totalBudget)}</span>}
+        </div>
+        {snap && (
+          <div className="row" style={{marginTop:10}}>
+            <span className="sub">Extra income this month:</span>
+            <input className="mono" style={{width:100, padding:"5px 8px"}} inputMode="decimal" placeholder={String(snap.extra || 0)} value={extraIn}
+              onChange={(e) => setExtraIn(e.target.value.replace(/[^0-9.]/g, ""))} aria-label="Extra income" />
+            <button className="btn sm ghost" onClick={() => { const v = parseFloat(extraIn); if (Number.isFinite(v) && v >= 0) { setExtraIncome(month, v); setExtraIn(""); } }}>Save</button>
+          </div>
+        )}
+      </div>
+
+      <div className="catgrid" style={{marginBottom: 14}}>
+        {cats.map((c) => {
+          const b = budgets[c.id], sp = spentBy[c.id] || 0, left = b - sp;
+          const pct = b > 0 ? Math.min((sp / b) * 100, 100) : 0;
+          const over = sp > b;
+          const isSavings = c.id === savingsCatId;
+          return (
+            <div key={c.id} className="catcard">
+              <div className="nm"><span className="dot" style={{background: c.color}} />{c.name}</div>
+              <div className={"amt mono " + (over && !isSavings ? "over" : "")}>{fmt(isSavings ? sp : left)} <span className="sub" style={{fontSize:11}}>{isSavings ? "put away" : "left"}</span></div>
+              <div className="sub mono">{isSavings ? `target ${fmt(b)}` : `${fmt(sp)} of ${fmt(b)}`}</div>
+              <div className="bar"><i style={{width: `${pct}%`, background: over && !isSavings ? "var(--coral)" : c.color}} /></div>
+              {isSavings && <p className="sub" style={{marginTop:6, fontSize:11}}>Counted from Goals + Invest activity.</p>}
+            </div>
+          );
+        })}
+      </div>
+
+      <div className="card">
+        <h3>Month over month</h3>
+        <div className="chips" style={{marginBottom:10}}>
+          <button className={"chip sm" + (mode === "overall" ? " on" : "")} onClick={() => setMode("overall")}>Overall</button>
+          <button className={"chip sm" + (mode === "cat" ? " on" : "")} onClick={() => { setMode("cat"); if (!pick || !cats.some((c) => c.id === pick)) setPick(cats[0] ? cats[0].id : ""); }}>By category</button>
+          <button className={"chip sm" + (mode === "sub" ? " on" : "")} onClick={() => { setMode("sub"); if (!pick || !subcats.some((s) => s.id === pick)) setPick(subcats[0] ? subcats[0].id : ""); }}>By subcategory</button>
+          {mode === "cat" && (
+            <select style={{width:"auto", padding:"5px 8px"}} value={pick} onChange={(e) => setPick(e.target.value)} aria-label="Pick category">
+              {cats.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
+            </select>
+          )}
+          {mode === "sub" && (
+            <select style={{width:"auto", padding:"5px 8px"}} value={pick} onChange={(e) => setPick(e.target.value)} aria-label="Pick subcategory">
+              {subcats.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
+            </select>
+          )}
+        </div>
+        <ResponsiveContainer width="100%" height={170}>
+          <LineChart data={momData} margin={{top:5, right:10, left:0, bottom:0}}>
+            <XAxis dataKey="m" tick={{fontSize:10}} />
+            <YAxis tick={{fontSize:10}} width={55} />
+            <Tooltip formatter={(v) => fmt(v)} />
+            <Line type="monotone" dataKey="v" stroke="#2E7D5B" strokeWidth={2} dot={{r:3}} />
+          </LineChart>
+        </ResponsiveContainer>
+      </div>
+
+      {bySub.length > 0 && (
+        <div className="card">
+          <h3>Where it went — by subcategory</h3>
+          <table>
+            <tbody>
+              {bySub.map((r) => (
+                <tr key={r.name} className="divrow">
+                  <td style={{width:130, fontWeight:600, fontSize:12.5}}>{r.name}</td>
+                  <td><div className="bar" style={{marginTop:0}}><i style={{width: `${subMax ? (r.v / subMax) * 100 : 0}%`, background: "var(--green)"}} /></div></td>
+                  <td className="mono" style={{width:90, textAlign:"right"}}>{fmt(r.v)}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+
+      <div className="card">
+        <h3>Weekly check-in <span className="sub" style={{fontWeight:400}}>· Sun–Sat</span></h3>
+        {isCurrent && weeksLeft > 0 && (
+          <p className="sub" style={{marginBottom: 8}}>
+            Safe to spend: <b className="mono" style={{color: remaining < 0 ? "var(--coral)" : "var(--green)"}}>{fmt(Math.max(remaining, 0) / weeksLeft)}</b> per week for the rest of the month.
+          </p>
+        )}
+        <table>
+          <thead><tr><th>Week</th><th>Days</th><th style={{textAlign:"right"}}>Spent</th><th style={{textAlign:"right"}}>vs. guide</th></tr></thead>
+          <tbody>
+            {weeks.map((w, i) => {
+              const diff = weeklySpend[i] - weeklyGuide;
+              const future = isCurrent && w.start > dayNow;
+              return (
+                <tr key={w.label} className={i === currentWeekIdx ? "now" : ""}>
+                  <td style={{fontWeight:600}}>{w.label}{i === currentWeekIdx ? " · now" : ""}</td>
+                  <td className="sub">{w.start}–{w.end}</td>
+                  <td className="mono" style={{textAlign:"right"}}>{future ? "—" : fmt(weeklySpend[i])}</td>
+                  <td className="mono" style={{textAlign:"right", color: future ? "var(--muted)" : diff > 0 ? "var(--coral)" : "var(--green)"}}>
+                    {future ? fmt(weeklyGuide) + " avail." : (diff > 0 ? "+" : "") + fmt(diff)}
+                  </td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
+    </>
+  );
+}
+
+/* ============================ log tab ============================ */
+function LogTab({ cats, subcats, txns, persistTxns, rules, persistRules, addTxnsBulk, month, savingsCatId, loadMonth, nowYM }) {
+  const spendCats = cats.filter((c) => c.id !== savingsCatId);
+  const [amount, setAmount] = useState("");
+  const [desc, setDesc] = useState("");
+  const [catId, setCatId] = useState(spendCats[0] ? spendCats[0].id : "");
+  const [subId, setSubId] = useState("");
+  const [date, setDate] = useState(todayStr());
+  const [note, setNote] = useState("");
+  const [review, setReview] = useState(null);
+  const [csvErr, setCsvErr] = useState("");
+  const [csvBusy, setCsvBusy] = useState(false);
+  const [importNote, setImportNote] = useState("");
+  const [editingId, setEditingId] = useState(null);
+  const [edit, setEdit] = useState({});
+  const [listOpen, setListOpen] = useState(false);
+  const isCurrent = month === nowYM;
+  const showList = isCurrent || listOpen;
+
+  const defaultCatId = useMemo(() => {
+    const counts = {};
+    txns.forEach((t) => { counts[t.catId] = (counts[t.catId] || 0) + 1; });
+    Object.values(rules).forEach((v) => { counts[v.c] = (counts[v.c] || 0) + 1; });
+    const best = Object.entries(counts).sort((a, b) => b[1] - a[1]).find(([id]) => spendCats.some((c) => c.id === id));
+    return best ? best[0] : (spendCats[0] ? spendCats[0].id : "");
+  }, [txns, rules, cats]); // eslint-disable-line
+
+  const add = async () => {
+    const a = parseFloat(amount);
+    if (!Number.isFinite(a) || a <= 0) { setNote("Enter an amount above zero."); return; }
+    if (date > todayStr()) { setNote("That date is in the future."); return; }
+    if (!catId) { setNote("Pick a category."); return; }
+    const t = { id: uid(), date, desc: desc.trim() || "Untitled", amount: clamp2(a), catId, subId: subId || null, source: "manual" };
+    if (t.date.slice(0, 7) === month) await persistTxns([t, ...txns].sort((x, y) => (x.date < y.date ? 1 : -1)));
+    else await addTxnsBulk([t]);
+    if (t.desc !== "Untitled") {
+      const k = normMerchant(t.desc);
+      if (k) await persistRules({ ...rules, [k]: { c: catId, s: subId || "" } });
+    }
+    setAmount(""); setDesc(""); setNote(`Logged ${fmt(t.amount)}.`);
+  };
+
+  const del = (id) => persistTxns(txns.filter((t) => t.id !== id));
+  const patchTxn = async (id, patch, learn) => {
+    const t = txns.find((x) => x.id === id);
+    const next = { ...t, ...patch };
+    await persistTxns(txns.map((x) => (x.id === id ? next : x)));
+    if (learn && t && t.desc) {
+      const key = normMerchant(t.desc);
+      if (key) await persistRules({ ...rules, [key]: { c: next.catId, s: next.subId || "" } });
+    }
+  };
+  const startEdit = (t) => { setEditingId(t.id); setEdit({ date: t.date, desc: t.desc, amount: String(t.amount) }); };
+  const saveEdit = async () => {
+    const a = parseFloat(edit.amount);
+    if (!Number.isFinite(a) || a <= 0 || !edit.date || edit.date > todayStr()) { setNote("Check the edited amount and date."); return; }
+    const t = txns.find((x) => x.id === editingId);
+    if (edit.date.slice(0, 7) !== month) {
+      await persistTxns(txns.filter((x) => x.id !== editingId));
+      await addTxnsBulk([{ ...t, date: edit.date, desc: edit.desc.trim() || t.desc, amount: clamp2(a) }]);
+    } else {
+      await patchTxn(editingId, { date: edit.date, desc: edit.desc.trim() || t.desc, amount: clamp2(a) });
+    }
+    setEditingId(null);
+  };
+
+  const aiCategorize = async (rows) => {
+    const need = rows.filter((r) => r.valid && !r.ignore && (!r.catId || !r.subId));
+    if (!need.length) return { rows, aiNote: "" };
+    const out = rows.map((r) => (!r.valid || r.ignore || r.catId) ? r : { ...r, catId: defaultCatId });
+    return { rows: out, aiNote: `${need.length} row${need.length === 1 ? "" : "s"} used your most-used category — worth a quick check.` };
+  };
+
+  const onFile = (e) => {
+    const file = e.target.files && e.target.files[0];
+    if (!file) return;
+    setCsvErr(""); setImportNote("");
+    Papa.parse(file, {
+      header: true, skipEmptyLines: true,
+      complete: async (res) => {
+        const fields = (res.meta.fields || []).map((f) => f.trim());
+        const find = (...names) => fields.find((f) => names.some((n) => f.toLowerCase().includes(n)));
+        const dateCol = find("date"), descCol = find("desc", "payee", "merchant", "name", "memo"), amtCol = find("amount", "debit", "value");
+        if (!dateCol || !descCol || !amtCol) {
+          setCsvErr(`Couldn't find the needed columns. Found: ${fields.join(", ") || "none"}. Needs a date, a description/merchant, and an amount column.`);
+          return;
+        }
+        let rows = res.data.map((r, i) => {
+          const rawAmt = String(r[amtCol] || "").replace(/[$,()\s]/g, "");
+          const amt = Math.abs(parseFloat(rawAmt));
+          const d = new Date(r[dateCol]);
+          const valid = Number.isFinite(amt) && amt > 0 && !isNaN(d.getTime());
+          const dateStr = valid ? `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())}` : "";
+          const descStr = String(r[descCol] || "").trim();
+          const key = normMerchant(descStr);
+          const rule = key && rules[key] ? rules[key] : null;
+          const ignore = valid && IGNORE_RX.test(descStr);
+          return { i, include: valid && !ignore, valid, ignore, dup: false, date: dateStr, desc: descStr, amount: valid ? clamp2(amt) : 0, catId: rule ? rule.c : "", subId: rule ? rule.s : "" };
+        });
+        if (!rows.length) { setCsvErr("The file parsed but had no rows."); return; }
+        setCsvBusy(true);
+        // duplicate detection against already-imported months
+        const yms = [...new Set(rows.filter((r) => r.valid).map((r) => r.date.slice(0, 7)))];
+        const seen = new Set();
+        for (const ym of yms) {
+          (await loadMonth(ym)).forEach((t) => seen.add(`${t.date}|${t.amount}|${normMerchant(t.desc)}`));
+        }
+        let dups = 0;
+        rows = rows.map((r) => {
+          if (r.valid && seen.has(`${r.date}|${r.amount}|${normMerchant(r.desc)}`)) { dups++; return { ...r, dup: true, include: false }; }
+          return r;
+        });
+        const { rows: filled, aiNote } = await aiCategorize(rows);
+        setCsvBusy(false);
+        const notes = [];
+        if (dups) notes.push(`${dups} likely duplicate${dups === 1 ? "" : "s"} skipped (already imported) — re-check any you want to keep.`);
+        const ign = filled.filter((r) => r.ignore).length;
+        if (ign) notes.push(`${ign} row${ign === 1 ? "" : "s"} look like transfers or card payments and are marked Ignore.`);
+        if (aiNote) notes.push(aiNote);
+        if (notes.length) setImportNote(notes.join(" "));
+        setReview({ fileName: file.name, rows: filled });
+      },
+      error: (err) => setCsvErr("Couldn't read that file: " + err.message),
+    });
+    e.target.value = "";
+  };
+
+  const confirmImport = async () => {
+    const good = review.rows.filter((r) => r.include && r.valid && (r.catId || r.ignore));
+    const newRules = { ...rules };
+    good.forEach((r) => { if (!r.ignore) { const k = normMerchant(r.desc); if (k) newRules[k] = { c: r.catId, s: r.subId || "" }; } });
+    await persistRules(newRules);
+    await addTxnsBulk(good.map((r) => ({ id: uid(), date: r.date, desc: r.desc, amount: r.amount, catId: r.ignore ? null : r.catId, subId: r.ignore ? null : (r.subId || null), excluded: r.ignore || undefined, source: "csv" })));
+    setReview(null);
+    setImportNote(`Imported ${good.length} row${good.length === 1 ? "" : "s"}.`);
+  };
+
+  const setRow = (i, patch) => setReview({ ...review, rows: review.rows.map((r) => (r.i === i ? { ...r, ...patch } : r)) });
+  const pendingCount = review ? review.rows.filter((r) => r.include && r.valid && (r.catId || r.ignore)).length : 0;
+  const monthTotal = txns.reduce((s, t) => s + (t.excluded ? 0 : t.amount), 0);
+
+  return (
+    <>
+      <div className="card">
+        <h3>Quick add</h3>
+        <input className="biginput mono" inputMode="decimal" placeholder="0.00" value={amount}
+          onChange={(e) => setAmount(e.target.value.replace(/[^0-9.]/g, ""))} aria-label="Amount" />
+        <div style={{height:10}} />
+        <div className="chips" role="group" aria-label="Category">
+          {spendCats.map((c) => (
+            <button key={c.id} className={"chip" + (catId === c.id ? " on" : "")} onClick={() => setCatId(c.id)}>{c.name}</button>
+          ))}
+        </div>
+        <div style={{height:8}} />
+        <div className="chips" role="group" aria-label="Subcategory">
+          {subcats.map((s) => (
+            <button key={s.id} className={"chip sm" + (subId === s.id ? " on" : "")} onClick={() => setSubId(subId === s.id ? "" : s.id)}>{s.name}</button>
+          ))}
+        </div>
+        <div style={{height:10}} />
+        <div className="row">
+          <div className="grow"><input placeholder="What was it?" value={desc} onChange={(e) => setDesc(e.target.value)} aria-label="Description" /></div>
+          <div style={{width:150}}><input type="date" value={date} max={todayStr()} onChange={(e) => setDate(e.target.value)} aria-label="Date" /></div>
+          <button className="btn" onClick={add}>Log it</button>
+        </div>
+        {note && <p className="ok" style={{marginTop:8}}>{note}</p>}
+      </div>
+
+      <div className="card">
+        <h3>Import from CSV</h3>
+        {csvBusy && <p className="sub">Categorizing your transactions…</p>}
+        {!review && !csvBusy && (
+          <>
+            <div className="filedrop">
+              <input type="file" accept=".csv,text/csv" onChange={onFile} aria-label="Choose CSV file" />
+            </div>
+            {csvErr && <p className="err" style={{marginTop:8}}>{csvErr}</p>}
+            {importNote && <p className="ok" style={{marginTop:8}}>{importNote}</p>}
+          </>
+        )}
+        {review && !csvBusy && (
+          <>
+            <p className="sub" style={{marginBottom:8}}><b>{review.fileName}</b> — {review.rows.length} rows, pre-filled. Spot-check and import.</p>
+            {importNote && <p className="err" style={{marginBottom:8}}>{importNote}</p>}
+            <div style={{maxHeight:340, overflowY:"auto"}}>
+              <table>
+                <thead><tr><th></th><th>Date</th><th>Description</th><th style={{textAlign:"right"}}>Amt</th><th>Category</th><th>Sub</th></tr></thead>
+                <tbody>
+                  {review.rows.map((r) => (
+                    <tr key={r.i} style={{opacity: r.include && r.valid ? 1 : 0.45}}>
+                      <td><input type="checkbox" style={{width:"auto"}} checked={r.include && r.valid} disabled={!r.valid} onChange={(e) => setRow(r.i, {include: e.target.checked})} /></td>
+                      <td className="sub mono">{r.valid ? r.date.slice(5) : "bad"}{r.dup ? " · dup" : ""}</td>
+                      <td style={{maxWidth:150, overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap"}}>{r.desc}</td>
+                      <td className="mono" style={{textAlign:"right"}}>{r.valid ? fmt(r.amount) : "—"}</td>
+                      <td>
+                        <select value={r.ignore ? "__ignore" : r.catId} disabled={!r.valid}
+                          onChange={(e) => e.target.value === "__ignore" ? setRow(r.i, {ignore: true}) : setRow(r.i, {ignore: false, catId: e.target.value})}>
+                          <option value="">{r.valid ? "Choose…" : "—"}</option>
+                          {spendCats.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
+                          <option value="__ignore">Ignore — transfer / card payment</option>
+                        </select>
+                      </td>
+                      <td>
+                        <select value={r.subId || ""} onChange={(e) => setRow(r.i, {subId: e.target.value})} disabled={!r.valid || r.ignore}>
+                          <option value="">—</option>
+                          {subcats.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
+                        </select>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+            <div className="row" style={{marginTop:12}}>
+              <button className="btn" disabled={pendingCount === 0} onClick={confirmImport}>Import {pendingCount}</button>
+              <button className="btn ghost" onClick={() => setReview(null)}>Cancel</button>
+            </div>
+          </>
+        )}
+      </div>
+
+      <div className="card">
+        <div className={isCurrent ? "" : "sumrow"} onClick={() => !isCurrent && setListOpen(!listOpen)}>
+          <h3 style={{marginBottom: showList ? 10 : 0}}>
+            {!isCurrent && <span className={"chev" + (listOpen ? " open" : "")}>▶</span>} {monthLabel(month)} — {txns.length} transaction{txns.length === 1 ? "" : "s"} · <span className="mono">{fmt(monthTotal)}</span>
+          </h3>
+        </div>
+        {showList && txns.length === 0 && <p className="sub">Nothing logged this month yet.</p>}
+        {showList && txns.map((t) => {
+          const c = cats.find((x) => x.id === t.catId);
+          if (editingId === t.id) return (
+            <div key={t.id} className="txn">
+              <input type="date" style={{width:140}} value={edit.date} max={todayStr()} onChange={(e) => setEdit({...edit, date: e.target.value})} aria-label="Edit date" />
+              <input className="grow" style={{minWidth:120}} value={edit.desc} onChange={(e) => setEdit({...edit, desc: e.target.value})} aria-label="Edit description" />
+              <input className="mono" style={{width:90}} inputMode="decimal" value={edit.amount} onChange={(e) => setEdit({...edit, amount: e.target.value.replace(/[^0-9.]/g, "")})} aria-label="Edit amount" />
+              <button className="btn sm" onClick={saveEdit}>Save</button>
+              <button className="btn sm ghost" onClick={() => setEditingId(null)}>Cancel</button>
+            </div>
+          );
+          return (
+            <div key={t.id} className={"txn" + (t.excluded ? " dim" : "")}>
+              <span className="d mono">{t.date.slice(5)}</span>
+              <span className="dot" style={{background: t.excluded ? "var(--muted)" : c ? c.color : "var(--muted)"}} />
+              <span className="n">{t.desc}{t.excluded ? " · ignored" : ""}</span>
+              <select value={t.excluded ? "__ignore" : (t.catId || "")} aria-label="Category"
+                onChange={(e) => e.target.value === "__ignore" ? patchTxn(t.id, {excluded: true}) : patchTxn(t.id, {excluded: undefined, catId: e.target.value}, true)}>
+                {!t.catId && !t.excluded && <option value="">Choose…</option>}
+                {spendCats.map((x) => <option key={x.id} value={x.id}>{x.name}</option>)}
+                <option value="__ignore">Ignore</option>
+              </select>
+              {!t.excluded && (
+                <select value={t.subId || ""} onChange={(e) => patchTxn(t.id, {subId: e.target.value || null}, true)} aria-label="Subcategory">
+                  <option value="">—</option>
+                  {subcats.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
+                </select>
+              )}
+              <span className="a mono">{fmt(t.amount)}</span>
+              <button className="x" onClick={() => startEdit(t)} aria-label="Edit transaction">✎</button>
+              <ConfirmX onConfirm={() => del(t.id)} label="Delete transaction" />
+            </div>
+          );
+        })}
+      </div>
+    </>
+  );
+}
+
+/* ============================ goals (pool) tab ============================ */
+function PoolTab({ pool, persistPool }) {
+  const num = (s) => { const n = parseFloat(s); return Number.isFinite(n) ? clamp2(n) : 0; };
+  const [balIn, setBalIn] = useState("");
+  const [addAmt, setAddAmt] = useState("");
+  const [addDate, setAddDate] = useState(todayStr());
+  const [bName, setBName] = useState("");
+  const [bTarget, setBTarget] = useState("");
+  const [bDeadline, setBDeadline] = useState("");
+  const [bMode, setBMode] = useState("amount");
+  const [bVal, setBVal] = useState("");
+  const [openB, setOpenB] = useState({});
+  const [histOpen, setHistOpen] = useState(false);
+  const [editC, setEditC] = useState(null); // contribution being edited {id, date, amount}
+  const [err, setErr] = useState("");
+
+  const { dollars, allocated, unallocated } = resolveBuckets(pool);
+  const fv1y = (pool.balance || 0) * Math.pow(1 + (pool.rate || 0) / 100 / 12, 12);
+  const contribs = [...(pool.contribs || [])].sort((a, b) => (a.date < b.date ? 1 : -1));
+
+  const setPoolField = (patch) => persistPool({ ...pool, ...patch });
+  const addToPool = () => {
+    const a = num(addAmt);
+    if (a <= 0) { setErr("Enter an amount above zero."); return; }
+    if (addDate > todayStr()) { setErr("That date is in the future."); return; }
+    setErr("");
+    persistPool({ ...pool, balance: clamp2((pool.balance || 0) + a), contribs: [...(pool.contribs || []), { id: uid(), date: addDate, amount: a }] });
+    setAddAmt(""); setAddDate(todayStr());
+  };
+  const saveContribEdit = () => {
+    const a = num(editC.amount);
+    if (a <= 0 || !editC.date || editC.date > todayStr()) { setErr("Check the contribution amount and date."); return; }
+    setErr("");
+    const old = (pool.contribs || []).find((c) => c.id === editC.id);
+    persistPool({
+      ...pool,
+      balance: clamp2((pool.balance || 0) - old.amount + a),
+      contribs: pool.contribs.map((c) => (c.id === editC.id ? { ...c, date: editC.date, amount: a } : c)),
+    });
+    setEditC(null);
+  };
+  const delContrib = (c) => persistPool({ ...pool, balance: clamp2((pool.balance || 0) - c.amount), contribs: pool.contribs.filter((x) => x.id !== c.id) });
+
+  const addBucket = () => {
+    const t = num(bTarget), v = num(bVal);
+    if (!bName.trim() || t <= 0) { setErr("A bucket needs a name and a target above zero."); return; }
+    if (bMode === "pct" && (v < 0 || v > 100)) { setErr("Percentage must be 0–100."); return; }
+    setErr("");
+    persistPool({ ...pool, buckets: [...(pool.buckets || []), {
+      id: uid(), name: bName.trim(), target: t, alloc: { mode: bMode, value: v },
+      spent: 0, deadline: bDeadline || null, created: todayStr(),
+    }]});
+    setBName(""); setBTarget(""); setBDeadline(""); setBVal("");
+  };
+  const patchBucket = (id, patch) => persistPool({ ...pool, buckets: pool.buckets.map((b) => (b.id === id ? { ...b, ...patch } : b)) });
+  const delBucket = (id) => persistPool({ ...pool, buckets: pool.buckets.filter((b) => b.id !== id) });
+  const spendFromBucket = (b, amtStr) => {
+    const a = num(amtStr);
+    if (a <= 0) return;
+    persistPool({
+      ...pool,
+      balance: Math.max(0, clamp2((pool.balance || 0) - a)),
+      buckets: pool.buckets.map((x) => x.id === b.id ? {
+        ...x, spent: clamp2(x.spent + a),
+        alloc: x.alloc.mode === "amount" ? { ...x.alloc, value: Math.max(0, clamp2(x.alloc.value - a)) } : x.alloc,
+      } : x),
+    });
+  };
+  const monthsUntil = (deadline) => {
+    if (!deadline) return null;
+    const n = new Date(); const d = new Date(deadline + "T00:00:00");
+    return Math.max((d.getFullYear() - n.getFullYear()) * 12 + (d.getMonth() - n.getMonth()), 0);
+  };
+  const [spendIn, setSpendIn] = useState({});
+
+  return (
+    <>
+      <div className="card">
+        <h3>Savings pool</h3>
+        <div className="statgrid">
+          <div className="stat"><div className="k">Balance</div><div className="v mono">{fmt(pool.balance || 0)}</div></div>
+          <div className="stat"><div className="k">Allocated</div><div className="v mono">{fmt(allocated)}</div></div>
+          <div className="stat"><div className="k">Unallocated</div><div className="v mono" style={{color: unallocated < 0 ? "var(--coral)" : "var(--ink)"}}>{fmt(unallocated)}</div></div>
+          <div className="stat"><div className="k">≈ in 1 year at {pool.rate || 0}%</div><div className="v mono">{fmt(fv1y)}</div></div>
+        </div>
+        {unallocated < 0 && <p className="err" style={{marginBottom:8}}>You've allocated {fmt(-unallocated)} more than the pool holds — trim a bucket or add money.</p>}
+        <div className="row">
+          <div style={{width:150}}><label>Set balance</label><input className="mono" inputMode="decimal" placeholder={String(pool.balance || 0)} value={balIn} onChange={(e) => setBalIn(e.target.value.replace(/[^0-9.]/g, ""))} /></div>
+          <button className="btn sm ghost" style={{alignSelf:"flex-end"}} onClick={() => { const v = num(balIn); if (v >= 0 && balIn !== "") { setPoolField({balance: v}); setBalIn(""); } }}>Update</button>
+          <div style={{width:100}}><label>APY %</label><input className="mono" inputMode="decimal" value={pool.rate} onChange={(e) => setPoolField({rate: parseFloat(e.target.value.replace(/[^0-9.]/g, "")) || 0})} /></div>
+          <div className="grow" />
+          <div style={{width:120}}><label>Add money</label><input className="mono" inputMode="decimal" placeholder="0" value={addAmt} onChange={(e) => setAddAmt(e.target.value.replace(/[^0-9.]/g, ""))} /></div>
+          <div style={{width:150}}><label>On</label><input type="date" value={addDate} max={todayStr()} onChange={(e) => setAddDate(e.target.value)} /></div>
+          <button className="btn" style={{alignSelf:"flex-end"}} onClick={addToPool}>Add</button>
+        </div>
+        {err && <p className="err" style={{marginTop:8}}>{err}</p>}
+        <div className="sumrow" style={{marginTop:12}} onClick={() => setHistOpen(!histOpen)}>
+          <span className={"chev" + (histOpen ? " open" : "")}>▶</span>
+          <span className="sub">Contribution history ({contribs.length})</span>
+        </div>
+        {histOpen && contribs.map((c) => editC && editC.id === c.id ? (
+          <div key={c.id} className="txn">
+            <input type="date" style={{width:140}} value={editC.date} max={todayStr()} onChange={(e) => setEditC({...editC, date: e.target.value})} />
+            <input className="mono" style={{width:100}} inputMode="decimal" value={editC.amount} onChange={(e) => setEditC({...editC, amount: e.target.value.replace(/[^0-9.]/g, "")})} />
+            <button className="btn sm" onClick={saveContribEdit}>Save</button>
+            <button className="btn sm ghost" onClick={() => setEditC(null)}>Cancel</button>
+          </div>
+        ) : (
+          <div key={c.id} className="txn">
+            <span className="d mono" style={{width:80}}>{c.date}</span>
+            <span className="n sub">deposit</span>
+            <span className="a mono">{fmt(c.amount)}</span>
+            <button className="x" onClick={() => setEditC({id: c.id, date: c.date, amount: String(c.amount)})} aria-label="Edit contribution">✎</button>
+            <ConfirmX onConfirm={() => delContrib(c)} label="Delete contribution" />
+          </div>
+        ))}
+      </div>
+
+      <div className="card">
+        <h3>New bucket</h3>
+        <div className="row">
+          <div className="grow"><label>Goal</label><input placeholder="Wedding, house fund…" value={bName} onChange={(e) => setBName(e.target.value)} /></div>
+          <div style={{width:110}}><label>Target</label><input className="mono" inputMode="decimal" value={bTarget} onChange={(e) => setBTarget(e.target.value.replace(/[^0-9.]/g, ""))} /></div>
+          <div style={{width:150}}><label>Allocate</label>
+            <div className="row" style={{gap:4}}>
+              <input className="mono" style={{width:70}} inputMode="decimal" value={bVal} onChange={(e) => setBVal(e.target.value.replace(/[^0-9.]/g, ""))} />
+              <button className="chip sm" onClick={() => setBMode(bMode === "amount" ? "pct" : "amount")}>{bMode === "amount" ? "$" : "% of pool"}</button>
+            </div>
+          </div>
+          <div style={{width:150}}><label>By (optional)</label><input type="date" value={bDeadline} onChange={(e) => setBDeadline(e.target.value)} /></div>
+          <button className="btn gold" style={{alignSelf:"flex-end"}} onClick={addBucket}>Add</button>
+        </div>
+      </div>
+
+      {(pool.buckets || []).map((b) => {
+        const alloc = dollars[b.id] || 0;
+        const funded = clamp2(alloc + b.spent);
+        const savedPct = Math.min((alloc / b.target) * 100, 100);
+        const spentPct = Math.min((b.spent / b.target) * 100, 100 - savedPct);
+        const remainingToFund = Math.max(b.target - funded, 0);
+        const mLeft = monthsUntil(b.deadline);
+        const needed = mLeft && mLeft > 0 ? remainingToFund / mLeft : null;
+        const done = funded >= b.target;
+        const open = !!openB[b.id];
+        return (
+          <div key={b.id} className="goal">
+            <div className="sumrow" onClick={() => setOpenB({...openB, [b.id]: !open})}>
+              <span className={"chev" + (open ? " open" : "")}>▶</span>
+              <b style={{fontSize:14.5}}>{b.name}</b>
+              <span className="pill">{b.alloc.mode === "pct" ? `${b.alloc.value}% of pool` : "fixed"}</span>
+              <span className="sub mono grow">{fmt(funded)} of {fmt(b.target)}{b.deadline ? ` · by ${b.deadline}` : ""}</span>
+              <span className="sub mono">{Math.round((funded / b.target) * 100)}%</span>
+            </div>
+            <div className="bar2">
+              <i style={{width:`${spentPct}%`, background:"var(--muted)"}} />
+              <i style={{width:`${savedPct}%`, background:"var(--gold)"}} />
+            </div>
+            {open && (
+              <>
+                <p className="sub mono" style={{marginTop:6}}>
+                  <span style={{color:"var(--muted)"}}>■</span> spent {fmt(b.spent)} · <span style={{color:"var(--gold)"}}>■</span> allocated {fmt(alloc)} · {fmt(remainingToFund)} still to fund
+                </p>
+                {done ? <p className="ok" style={{marginTop:6}}>Fully funded.</p> : needed !== null && (
+                  <p className="sub" style={{marginTop:6}}>Needs <b className="mono">{fmt(needed)}</b>/month by the deadline.</p>
+                )}
+                <div className="row" style={{marginTop:10}}>
+                  <div style={{width:120}}><label>Name</label><input value={b.name} onChange={(e) => patchBucket(b.id, {name: e.target.value})} /></div>
+                  <div style={{width:100}}><label>Target</label><input className="mono" inputMode="decimal" value={b.target} onChange={(e) => patchBucket(b.id, {target: num(e.target.value) || b.target})} /></div>
+                  <div style={{width:120}}><label>{b.alloc.mode === "pct" ? "% of pool" : "Allocated $"}</label>
+                    <input className="mono" inputMode="decimal" value={b.alloc.value} onChange={(e) => {
+                      const v = parseFloat(e.target.value.replace(/[^0-9.]/g, "")) || 0;
+                      if (b.alloc.mode === "pct" && v > 100) return;
+                      patchBucket(b.id, {alloc: {...b.alloc, value: v}});
+                    }} /></div>
+                  <button className="chip sm" style={{alignSelf:"flex-end"}} onClick={() => patchBucket(b.id, {alloc: {mode: b.alloc.mode === "amount" ? "pct" : "amount", value: 0}})}>switch to {b.alloc.mode === "amount" ? "%" : "$"}</button>
+                  <div style={{width:150}}><label>Deadline</label><input type="date" value={b.deadline || ""} onChange={(e) => patchBucket(b.id, {deadline: e.target.value || null})} /></div>
+                </div>
+                <div className="row" style={{marginTop:10}}>
+                  <div className="grow" />
+                  <input className="mono" style={{width:110}} inputMode="decimal" placeholder="Amount" value={spendIn[b.id] || ""} onChange={(e) => setSpendIn({...spendIn, [b.id]: e.target.value.replace(/[^0-9.]/g, "")})} aria-label={`Spend from ${b.name}`} />
+                  <button className="btn sm ghost" onClick={() => { spendFromBucket(b, spendIn[b.id]); setSpendIn({...spendIn, [b.id]: ""}); }}>Log spending</button>
+                  <ConfirmX onConfirm={() => delBucket(b.id)} label="Delete bucket" />
+                </div>
+              </>
+            )}
+          </div>
+        );
+      })}
+      {(pool.buckets || []).length === 0 && <div className="card"><p className="sub">No buckets yet — add one above to split the pool into goals.</p></div>}
+    </>
+  );
+}
+
+/* ============================ holding modal ============================ */
+function HoldingModal({ holding, onSave, onDelete, onClose }) {
+  const [qty, setQty] = useState(String(holding.qty || ""));
+  const [cost, setCost] = useState(String(holding.cost || ""));
+  const [buyDate, setBuyDate] = useState(holding.buyDate || "");
+  const [sellDate, setSellDate] = useState(holding.sellDate || "");
+  const [valIn, setValIn] = useState("");
+  const [history, setHistory] = useState(holding.history || []);
+  const num = (s) => { const n = parseFloat(s); return Number.isFinite(n) ? Math.round(n * 100) / 100 : 0; };
+
+  const curValue = history.length ? history[history.length - 1].value : 0;
+  const costN = num(cost);
+  const gl = Math.round((curValue - costN) * 100) / 100;
+  const glPct = costN > 0 ? Math.round((gl / costN) * 1000) / 10 : null;
+  const chartData = history.map((h) => ({ d: h.date.slice(5), gl: Math.round((h.value - costN) * 100) / 100 }));
+
+  const updateValue = () => {
+    const v = num(valIn);
+    if (v <= 0) return;
+    const t = todayStr();
+    setHistory([...history.filter((h) => h.date !== t), { date: t, value: v }].sort((a, b) => (a.date < b.date ? -1 : 1)));
+    setValIn("");
+  };
+  const [vErr, setVErr] = useState("");
+  const save = () => {
+    if (sellDate && buyDate && sellDate < buyDate) { setVErr("Sell date can't be before the buy date."); return; }
+    if (buyDate && buyDate > todayStr()) { setVErr("Buy date can't be in the future."); return; }
+    onSave2();
+  };
+  const onSave2 = () => onSave({
+    qty: num(qty), cost: costN,
+    buyDate: buyDate || null, sellDate: sellDate || null, history,
+  });
+
+  return (
+    <div className="overlay" onClick={onClose}>
+      <div className="modal" onClick={(e) => e.stopPropagation()} role="dialog" aria-label={`${holding.ticker} details`}>
+        <div className="row">
+          <h3 style={{marginBottom:0, fontSize:17}}>{holding.ticker}</h3>
+          {holding.sellDate && <span className="pill">sold</span>}
+          <div className="grow" />
+          <button className="x" onClick={onClose} aria-label="Close">✕</button>
+        </div>
+        <div className="statgrid">
+          <div className="stat"><div className="k">Market value</div><div className="v mono">{fmt(curValue)}</div></div>
+          <div className="stat"><div className="k">Gain / loss</div><div className="v mono" style={{color: gl < 0 ? "var(--coral)" : "var(--green)"}}>{(gl >= 0 ? "+" : "") + fmt(gl)}{glPct !== null ? ` (${glPct}%)` : ""}</div></div>
+          <div className="stat"><div className="k">Cost basis</div><div className="v mono">{fmt(costN)}</div></div>
+          <div className="stat"><div className="k">Quantity</div><div className="v mono">{num(qty)}</div></div>
+        </div>
+        {chartData.length >= 2 && (
+          <div className="chartbox" style={{marginBottom:12}}>
+            <h4>Gain / loss over time</h4>
+            <ResponsiveContainer width="100%" height={160}>
+              <LineChart data={chartData} margin={{top:5, right:10, left:0, bottom:0}}>
+                <XAxis dataKey="d" tick={{fontSize:10}} />
+                <YAxis tick={{fontSize:10}} width={50} />
+                <Tooltip formatter={(v) => fmt(v)} />
+                <ReferenceLine y={0} stroke="#E3E7E1" />
+                <Line type="monotone" dataKey="gl" stroke="#2E7D5B" strokeWidth={2} dot={{r:2.5}} />
+              </LineChart>
+            </ResponsiveContainer>
+          </div>
+        )}
+        {chartData.length < 2 && <p className="sub" style={{marginBottom:12}}>Update the market value over time (below) and a gain/loss chart will grow here.</p>}
+        <div className="row" style={{marginBottom:12}}>
+          <div className="grow"><label>Market value today</label><input className="mono" inputMode="decimal" placeholder={curValue ? String(curValue) : "0.00"} value={valIn} onChange={(e) => setValIn(e.target.value.replace(/[^0-9.]/g, ""))} /></div>
+          <button className="btn sm" style={{alignSelf:"flex-end"}} onClick={updateValue}>Update value</button>
+        </div>
+        <div className="row" style={{marginBottom:8}}>
+          <div style={{width:110}}><label>Quantity</label><input className="mono" inputMode="decimal" value={qty} onChange={(e) => setQty(e.target.value.replace(/[^0-9.]/g, ""))} /></div>
+          <div style={{width:130}}><label>Total cost</label><input className="mono" inputMode="decimal" value={cost} onChange={(e) => setCost(e.target.value.replace(/[^0-9.]/g, ""))} /></div>
+          <div style={{width:150}}><label>Date bought</label><input type="date" value={buyDate} onChange={(e) => setBuyDate(e.target.value)} /></div>
+          <div style={{width:150}}><label>Date sold (if sold)</label><input type="date" value={sellDate} onChange={(e) => setSellDate(e.target.value)} /></div>
+        </div>
+        {vErr && <p className="err">{vErr}</p>}
+        <div className="row" style={{marginTop:12}}>
+          <button className="btn" onClick={save}>Save</button>
+          <button className="btn ghost" onClick={onClose}>Cancel</button>
+          <div className="grow" />
+          <button className="btn sm ghost" style={{color:"var(--coral)"}} onClick={onDelete}>Remove holding</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+
+/* ============================ invest tab ============================ */
+function DivBars({ data }) {
+  const max = data.length ? Math.max(...data.map((d) => d.v)) : 0;
+  return (
+    <table>
+      <tbody>
+        {data.map((d, i) => (
+          <tr key={d.t} className="divrow">
+            <td style={{width:110, fontWeight:600, fontSize:12}} className="mono">{d.t}</td>
+            <td><div className="bar" style={{marginTop:0}}><i style={{width: `${max ? (d.v / max) * 100 : 0}%`, background: PALETTE[i % PALETTE.length]}} /></div></td>
+            <td className="mono" style={{width:90, textAlign:"right", fontSize:12}}>{fmt(d.v)}</td>
+          </tr>
+        ))}
+      </tbody>
+    </table>
+  );
+}
+
+function InvestTab({ invest, persistInvest, report, persistReport, nowYM }) {
+  const KINDS = ["Taxable brokerage", "401(k)", "Roth IRA", "Traditional IRA", "HSA", "Other"];
+  const [accName, setAccName] = useState("");
+  const [accKind, setAccKind] = useState(KINDS[0]);
+  const [accStart, setAccStart] = useState("");
+  const [accTarget, setAccTarget] = useState("");
+  const [tickerIn, setTickerIn] = useState({});
+  const [entry, setEntry] = useState({});
+  const [openAcc, setOpenAcc] = useState({});
+  const [formOpen, setFormOpen] = useState({});
+  const [editAcc, setEditAcc] = useState({});
+  const [openHolding, setOpenHolding] = useState(null);
+  const [busy, setBusy] = useState(false);
+  const [repErr, setRepErr] = useState("");
+  const [vErr, setVErr] = useState({});
+  const accounts = invest.accounts || [];
+  const num = (s) => { const n = parseFloat(s); return Number.isFinite(n) ? clamp2(n) : NaN; };
+
+  const holdingValue = (h) => (h.history && h.history.length ? h.history[h.history.length - 1].value : 0);
+  const entryRows = (acc) => {
+    const yms = Object.keys(acc.entries || {}).sort();
+    let prev = acc.startBalance || 0;
+    return yms.map((ym) => {
+      const e = acc.entries[ym];
+      const gain = clamp2(e.endBalance - prev - (e.contribution || 0));
+      prev = e.endBalance;
+      return { ym, ...e, gain };
+    });
+  };
+  const latestBalance = (acc) => {
+    const rows = entryRows(acc);
+    return rows.length ? rows[rows.length - 1].endBalance : (acc.startBalance || 0);
+  };
+  const holdingsTotal = (acc) => (acc.holdings || []).reduce((s, h) => s + (h.sellDate ? 0 : holdingValue(h)), 0);
+  const thisMonthContrib = (acc) => ((acc.entries || {})[nowYM] || {}).contribution || 0;
+
+  const addAccount = async () => {
+    if (!accName.trim()) return;
+    await persistInvest({ ...invest, accounts: [...accounts, {
+      id: uid(), name: accName.trim(), kind: accKind, startBalance: num(accStart) || 0,
+      monthlyTarget: num(accTarget) > 0 ? num(accTarget) : null, holdings: [], entries: {},
+    }]});
+    setAccName(""); setAccStart(""); setAccTarget("");
+  };
+  const patchAccount = (id, patch) => persistInvest({ ...invest, accounts: accounts.map((a) => a.id === id ? { ...a, ...patch } : a) });
+  const delAccount = (id) => persistInvest({ ...invest, accounts: accounts.filter((a) => a.id !== id) });
+  const addHolding = (acc) => {
+    const t = (tickerIn[acc.id] || "").trim().toUpperCase();
+    if (!t) return;
+    patchAccount(acc.id, { holdings: [...(acc.holdings || []), { id: uid(), ticker: t, qty: 0, cost: 0, buyDate: null, sellDate: null, history: [] }] });
+    setTickerIn({ ...tickerIn, [acc.id]: "" });
+  };
+  const saveEntry = (acc) => {
+    const e = entry[acc.id] || {};
+    const ym = e.month || nowYM;
+    const c = num(e.contribution), b = num(e.balance);
+    if (ym > nowYM) { setVErr({...vErr, [acc.id]: "That month hasn't happened yet."}); return; }
+    if (!Number.isFinite(b) || b < 0) { setVErr({...vErr, [acc.id]: "End balance is required."}); return; }
+    setVErr({...vErr, [acc.id]: ""});
+    patchAccount(acc.id, { entries: { ...(acc.entries || {}), [ym]: { contribution: Number.isFinite(c) ? c : 0, endBalance: b } } });
+    setEntry({ ...entry, [acc.id]: { month: ym, contribution: "", balance: "" } });
+  };
+  const delEntry = (acc, ym) => {
+    const next = { ...(acc.entries || {}) };
+    delete next[ym];
+    patchAccount(acc.id, { entries: next });
+  };
+
+  const totalBalance = accounts.reduce((s, a) => s + latestBalance(a), 0);
+  const totalGain = accounts.reduce((s, a) => s + entryRows(a).reduce((g, r) => g + r.gain, 0), 0);
+  const monthContrib = accounts.reduce((s, a) => s + thisMonthContrib(a), 0);
+  const hasHoldings = accounts.some((a) => (a.holdings || []).length);
+  const portfolioDiv = accounts.map((a) => ({ t: a.name, v: latestBalance(a) })).filter((d) => d.v > 0);
+
+  const modalAcc = openHolding ? accounts.find((a) => a.id === openHolding.accId) : null;
+  const modalHolding = modalAcc ? (modalAcc.holdings || []).find((h) => h.id === openHolding.holdingId) : null;
+
+  return (
+    <>
+      {modalHolding && (
+        <HoldingModal
+          holding={modalHolding}
+          onClose={() => setOpenHolding(null)}
+          onSave={(patch) => {
+            patchAccount(modalAcc.id, { holdings: modalAcc.holdings.map((h) => h.id === modalHolding.id ? { ...h, ...patch } : h) });
+            setOpenHolding(null);
+          }}
+          onDelete={() => {
+            patchAccount(modalAcc.id, { holdings: modalAcc.holdings.filter((h) => h.id !== modalHolding.id) });
+            setOpenHolding(null);
+          }}
+        />
+      )}
+
+      <div className="card">
+        <h3>Portfolio</h3>
+        <div className="statgrid">
+          <div className="stat"><div className="k">Total balance</div><div className="v mono">{fmt(totalBalance)}</div></div>
+          <div className="stat"><div className="k">All-time gain/loss</div><div className="v mono" style={{color: totalGain < 0 ? "var(--coral)" : "var(--green)"}}>{(totalGain >= 0 ? "+" : "") + fmt(totalGain)}</div></div>
+          <div className="stat"><div className="k">This month in</div><div className="v mono">{fmt(monthContrib)}</div></div>
+        </div>
+        {portfolioDiv.length > 1 && <DivBars data={portfolioDiv} />}
+        <div className="row" style={{marginTop:12}}>
+          <div className="grow"><label>New account</label><input placeholder="Fidelity 401(k)…" value={accName} onChange={(e) => setAccName(e.target.value)} /></div>
+          <div style={{width:150}}><label>Type</label>
+            <select value={accKind} onChange={(e) => setAccKind(e.target.value)}>{KINDS.map((k) => <option key={k}>{k}</option>)}</select>
+          </div>
+          <div style={{width:120}}><label>Balance today</label><input className="mono" inputMode="decimal" placeholder="0" value={accStart} onChange={(e) => setAccStart(e.target.value.replace(/[^0-9.]/g, ""))} /></div>
+          <div style={{width:130}}><label>Monthly target</label><input className="mono" inputMode="decimal" placeholder="optional" value={accTarget} onChange={(e) => setAccTarget(e.target.value.replace(/[^0-9.]/g, ""))} /></div>
+          <button className="btn" style={{alignSelf:"flex-end"}} onClick={addAccount}>Add</button>
+        </div>
+      </div>
+
+      {accounts.map((a) => {
+        const rows = entryRows(a);
+        const rowsDesc = [...rows].reverse();
+        const en = entry[a.id] || { month: nowYM, contribution: "", balance: "" };
+        const hTotal = holdingsTotal(a);
+        const open = !!openAcc[a.id];
+        const editing = !!editAcc[a.id];
+        const tContrib = thisMonthContrib(a);
+        const areaData = rows.map((r) => ({ m: monthShort(r.ym), bal: r.endBalance }));
+        const divData = (a.holdings || []).filter((h) => !h.sellDate && holdingValue(h) > 0).map((h) => ({ t: h.ticker, v: holdingValue(h) }));
+        return (
+          <div key={a.id} className="card">
+            <div className="sumrow" onClick={() => setOpenAcc({...openAcc, [a.id]: !open})}>
+              <span className={"chev" + (open ? " open" : "")}>▶</span>
+              <h3 style={{marginBottom:0}}>{a.name}</h3>
+              <span className="pill">{a.kind}</span>
+              <span className="sub mono grow">{fmt(latestBalance(a))}</span>
+              {a.monthlyTarget > 0 && (
+                <span className="sub mono" title="This month vs target">
+                  {fmt(tContrib)} / {fmt(a.monthlyTarget)} <span className="minibar"><i style={{width: `${Math.min((tContrib / a.monthlyTarget) * 100, 100)}%`}} /></span>
+                </span>
+              )}
+            </div>
+            {open && (
+              <>
+                <div style={{marginTop:12}}>
+                  {(a.holdings || []).map((h) => (
+                    <span key={h.id} className="holding" onClick={() => setOpenHolding({accId: a.id, holdingId: h.id})} role="button" tabIndex={0}
+                      onKeyDown={(e) => { if (e.key === "Enter") setOpenHolding({accId: a.id, holdingId: h.id}); }}>
+                      {h.ticker}{h.sellDate ? " · sold" : holdingValue(h) > 0 ? ` ${fmt(holdingValue(h))}` : ""}
+                    </span>
+                  ))}
+                  <span className="holding" style={{border:"none", background:"none", cursor:"default"}}>
+                    <input style={{width:100, padding:"4px 8px", fontSize:12}} placeholder="Add ticker" value={tickerIn[a.id] || ""} onChange={(e) => setTickerIn({...tickerIn, [a.id]: e.target.value})} aria-label="Ticker symbol" />
+                    <button className="btn sm ghost" onClick={() => addHolding(a)}>Add</button>
+                  </span>
+                </div>
+                {(areaData.length >= 2 || divData.length > 0) && (
+                  <div className="charts">
+                    {areaData.length >= 2 && (
+                      <div className="chartbox">
+                        <h4>Account value</h4>
+                        <ResponsiveContainer width="100%" height={150}>
+                          <AreaChart data={areaData} margin={{top:5, right:10, left:0, bottom:0}}>
+                            <defs>
+                              <linearGradient id={`g${a.id}`} x1="0" y1="0" x2="0" y2="1">
+                                <stop offset="0%" stopColor="#2E7D5B" stopOpacity={0.35} />
+                                <stop offset="100%" stopColor="#2E7D5B" stopOpacity={0.02} />
+                              </linearGradient>
+                            </defs>
+                            <XAxis dataKey="m" tick={{fontSize:10}} />
+                            <YAxis tick={{fontSize:10}} width={55} domain={["auto", "auto"]} />
+                            <Tooltip formatter={(v) => fmt(v)} />
+                            <Area type="monotone" dataKey="bal" stroke="#2E7D5B" strokeWidth={2} fill={`url(#g${a.id})`} dot={false} />
+                          </AreaChart>
+                        </ResponsiveContainer>
+                      </div>
+                    )}
+                    {divData.length > 0 && (
+                      <div className="chartbox" style={{padding:"10px 10px 6px"}}>
+                        <h4>Diversity</h4>
+                        <DivBars data={divData} />
+                      </div>
+                    )}
+                  </div>
+                )}
+                <div className="row" style={{marginTop:12}}>
+                  <button className="btn sm ghost" onClick={() => setFormOpen({...formOpen, [a.id]: !formOpen[a.id]})}>{formOpen[a.id] ? "Hide" : "Log a month"}</button>
+                  <button className="btn sm ghost" onClick={() => setEditAcc({...editAcc, [a.id]: !editing})}>{editing ? "Done editing" : "Edit account"}</button>
+                  <div className="grow" />
+                  <ConfirmX onConfirm={() => delAccount(a.id)} label="Delete account" />
+                </div>
+                {editing && (
+                  <div className="row" style={{marginTop:10}}>
+                    <div className="grow"><label>Name</label><input value={a.name} onChange={(e) => patchAccount(a.id, {name: e.target.value})} /></div>
+                    <div style={{width:150}}><label>Type</label>
+                      <select value={a.kind} onChange={(e) => patchAccount(a.id, {kind: e.target.value})}>{KINDS.map((k) => <option key={k}>{k}</option>)}</select>
+                    </div>
+                    <div style={{width:130}}><label>Monthly target</label><input className="mono" inputMode="decimal" value={a.monthlyTarget || ""} placeholder="none" onChange={(e) => { const v = num(e.target.value); patchAccount(a.id, {monthlyTarget: v > 0 ? v : null}); }} /></div>
+                    <div style={{width:130}}><label>Starting balance</label><input className="mono" inputMode="decimal" value={a.startBalance || 0} onChange={(e) => patchAccount(a.id, {startBalance: num(e.target.value) || 0})} /></div>
+                  </div>
+                )}
+                {formOpen[a.id] && (
+                  <>
+                    <div className="row" style={{marginTop:10}}>
+                      <div><label>Month</label><input type="month" value={en.month} max={nowYM} onChange={(e) => setEntry({...entry, [a.id]: {...en, month: e.target.value}})} /></div>
+                      <div style={{width:120}}><label>Contributed</label><input className="mono" inputMode="decimal" placeholder="0" value={en.contribution} onChange={(e) => setEntry({...entry, [a.id]: {...en, contribution: e.target.value.replace(/[^0-9.]/g, "")}})} /></div>
+                      <div style={{width:140}}><label>End balance</label><input className="mono" inputMode="decimal" placeholder="required" value={en.balance} onChange={(e) => setEntry({...entry, [a.id]: {...en, balance: e.target.value.replace(/[^0-9.]/g, "")}})} /></div>
+                      <button className="btn sm" style={{alignSelf:"flex-end"}} onClick={() => saveEntry(a)}>Save month</button>
+                      {hTotal > 0 && <button className="btn sm ghost" style={{alignSelf:"flex-end"}} onClick={() => setEntry({...entry, [a.id]: {...en, balance: String(hTotal)}})}>Use holdings total ({fmt(hTotal)})</button>}
+                    </div>
+                    {vErr[a.id] && <p className="err" style={{marginTop:6}}>{vErr[a.id]}</p>}
+                  </>
+                )}
+                {rowsDesc.length > 0 && (
+                  <table style={{marginTop:10}}>
+                    <thead><tr><th>Month</th><th style={{textAlign:"right"}}>In</th><th style={{textAlign:"right"}}>End balance</th><th style={{textAlign:"right"}}>Gain/loss</th><th></th></tr></thead>
+                    <tbody>
+                      {rowsDesc.map((r) => (
+                        <tr key={r.ym}>
+                          <td className="mono">{monthShort(r.ym)}</td>
+                          <td className="mono" style={{textAlign:"right"}}>{fmt(r.contribution)}</td>
+                          <td className="mono" style={{textAlign:"right"}}>{fmt(r.endBalance)}</td>
+                          <td className="mono" style={{textAlign:"right", color: r.gain < 0 ? "var(--coral)" : "var(--green)"}}>{(r.gain >= 0 ? "+" : "") + fmt(r.gain)}</td>
+                          <td style={{textAlign:"right", whiteSpace:"nowrap"}}>
+                            <button className="x" onClick={() => { setFormOpen({...formOpen, [a.id]: true}); setEntry({...entry, [a.id]: {month: r.ym, contribution: String(r.contribution), balance: String(r.endBalance)}}); }} aria-label="Edit entry">✎</button>
+                            <ConfirmX onConfirm={() => delEntry(a, r.ym)} label="Delete entry" />
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                )}
+              </>
+            )}
+          </div>
+        );
+      })}
+    </>
+  );
+}
+
+/* ============================ insights tab ============================ */
+function InsightsTab({ cats, budgets, spentBy, txns, month, income, pool, savingsCatId, savingsExtra, subcats, hist, nowYM }) {
+  const live = txns.filter((t) => !t.excluded);
+  const totalSpent = cats.reduce((s, c) => s + (spentBy[c.id] || 0), 0);
+  const totalBudget = cats.reduce((s, c) => s + budgets[c.id], 0);
+  const today = new Date();
+  const isCurrent = nowYM === month;
+  const progress = isCurrent ? today.getDate() / daysIn(month) : 1;
+
+  // 3 full prior months of per-category spend for trends
+  const priorMonths = [3, 2, 1].map((i) => shiftMonth(nowYM, -i)).filter((ym) => hist[ym] !== undefined);
+  const catByMonth = priorMonths.map((ym) => {
+    const m = {};
+    (hist[ym] || []).forEach((t) => { if (!t.excluded) m[t.catId] = (m[t.catId] || 0) + t.amount; });
+    return { ym, m };
+  });
+  const subTrend = priorMonths.map((ym) => {
+    const m = {};
+    (hist[ym] || []).forEach((t) => { if (!t.excluded && t.subId) m[t.subId] = (m[t.subId] || 0) + t.amount; });
+    return { ym, m };
+  });
+
+  const insights = [];
+  cats.forEach((c) => {
+    const b = budgets[c.id], sp = spentBy[c.id] || 0;
+    const isSavings = c.id === savingsCatId;
+    if (isSavings) {
+      if (b > 0 && isCurrent && progress > 0.6 && sp < b * 0.5)
+        insights.push({ tone: "gold", text: `${c.name} is at ${fmt(sp)} of its ${fmt(b)} target with most of the month gone.` });
+      return;
+    }
+    if (b > 0 && sp > b) insights.push({ tone: "warn", text: `${c.name} is over budget by ${fmt(sp - b)}.` });
+    else if (b > 0 && isCurrent && sp / b > progress + 0.12 && sp / b > 0.4)
+      insights.push({ tone: "warn", text: `${c.name} is burning fast: ${Math.round((sp / b) * 100)}% used with ${Math.round(progress * 100)}% of the month gone — on pace to end ~${fmt(sp / progress - b)} over.` });
+    // 3-month rising trend
+    if (catByMonth.length === 3) {
+      const vals = catByMonth.map((x) => x.m[c.id] || 0);
+      if (vals[0] > 0 && vals[0] < vals[1] && vals[1] < vals[2])
+        insights.push({ tone: "warn", text: `${c.name} has risen three months running: ${vals.map((v) => fmt(v)).join(" → ")}.` });
+    }
+  });
+  if (subTrend.length === 3) {
+    subcats.forEach((s) => {
+      const vals = subTrend.map((x) => x.m[s.id] || 0);
+      if (vals[0] > 20 && vals[0] < vals[1] && vals[1] < vals[2])
+        insights.push({ tone: "warn", text: `${s.name} is creeping up: ${vals.map((v) => fmt(v)).join(" → ")} over the last three months.` });
+    });
+  }
+  if (isCurrent) {
+    const weeks = weeksOf(month);
+    const wIdx = weeks.findIndex((w) => today.getDate() >= w.start && today.getDate() <= w.end);
+    const weeksLeft = weeks.length - wIdx;
+    const remaining = totalBudget - totalSpent;
+    if (remaining > 0 && weeksLeft > 0) insights.push({ tone: "ok", text: `${fmt(remaining)} left — ${fmt(remaining / weeksLeft)} a week through month end.` });
+    if (remaining < 0) insights.push({ tone: "warn", text: `The whole month's budget is spent, ${daysIn(month) - today.getDate()} days early.` });
+  }
+  const byMerchant = {};
+  live.forEach((t) => { const k = normMerchant(t.desc) || "OTHER"; byMerchant[k] = (byMerchant[k] || 0) + t.amount; });
+  const top = Object.entries(byMerchant).sort((a, b) => b[1] - a[1]).slice(0, 3);
+  if (top.length && totalSpent > 0) insights.push({ tone: "ok", text: `Biggest destinations: ${top.map(([k, v]) => `${k.toLowerCase()} (${fmt(v)})`).join(", ")}.` });
+  const { unallocated } = resolveBuckets(pool);
+  if (unallocated > 100) insights.push({ tone: "gold", text: `${fmt(unallocated)} in the savings pool isn't assigned to any bucket — point it at a goal.` });
+  if (unallocated < 0) insights.push({ tone: "warn", text: `Your buckets claim ${fmt(-unallocated)} more than the pool holds.` });
+  (pool.buckets || []).forEach((b) => {
+    const { dollars } = resolveBuckets(pool);
+    const funded = (dollars[b.id] || 0) + b.spent;
+    if (b.deadline && funded < b.target) {
+      const d = new Date(b.deadline + "T00:00:00");
+      const mLeft = Math.max((d.getFullYear() - today.getFullYear()) * 12 + (d.getMonth() - today.getMonth()), 0);
+      if (mLeft === 0) insights.push({ tone: "gold", text: `"${b.name}" deadline is this month and it's ${fmt(b.target - funded)} short.` });
+      else insights.push({ tone: "gold", text: `"${b.name}" needs ${fmt((b.target - funded) / mLeft)}/month to be funded by ${b.deadline}.` });
+    }
+  });
+  if (txns.length === 0 && savingsExtra === 0) insights.push({ tone: "ok", text: `Nothing logged for ${monthLabel(month)} yet.` });
+
+
+  return (
+    <>
+      <div className="card">
+        <h3>What the numbers say</h3>
+        {insights.map((ins, i) => (
+          <div key={i} className={"insight" + (ins.tone === "warn" ? " warn" : ins.tone === "gold" ? " gold" : "")}>{ins.text}</div>
+        ))}
+      </div>
+    </>
+  );
+}
+
+/* ============================ setup tab ============================ */
+function SetupTab({ settings, persistSettings, pool, invest, hist, nowYM, exportAll, importAll, applyProposal, onDone }) {
+  const [income, setIncome] = useState(settings ? String(settings.income) : "");
+  const [rows, setRows] = useState(
+    settings ? settings.categories.map((c) => ({ ...c }))
+             : [{ id: uid(), name: "Needs", pct: 50 }, { id: uid(), name: "Wants", pct: 30 }, { id: uid(), name: "Savings", pct: 20 }]
+  );
+  const [savingsCat, setSavingsCat] = useState(settings ? settings.savingsCatId || "" : "");
+  const [subs, setSubs] = useState(settings && settings.subcats ? settings.subcats.map((s) => ({ ...s })) : DEFAULT_SUBCATS.map((s) => ({ ...s })));
+  const [rollover, setRollover] = useState(settings ? !!settings.rollover : false);
+  const [msg, setMsg] = useState("");
+  const [ioMsg, setIoMsg] = useState("");
+  const [backupText, setBackupText] = useState("");
+  const [restoreText, setRestoreText] = useState("");
+
+  const sum = rows.reduce((s, r) => s + (parseFloat(r.pct) || 0), 0);
+  const inc = parseFloat(income);
+  const setRow = (id, patch) => setRows(rows.map((r) => (r.id === id ? { ...r, ...patch } : r)));
+
+  const save = async () => {
+    if (!Number.isFinite(inc) || inc <= 0) { setMsg("Enter your monthly income first."); return; }
+    const clean = rows.filter((r) => r.name.trim()).map((r, i) => ({
+      id: r.id, name: r.name.trim(), pct: Math.min(Math.max(parseFloat(r.pct) || 0, 0), 100), color: PALETTE[i % PALETTE.length],
+    }));
+    if (clean.length === 0) { setMsg("You need at least one category."); return; }
+    const savingsCatId = clean.some((c) => c.id === savingsCat) ? savingsCat : null;
+    const cleanSubs = subs.filter((s) => s.name.trim()).map((s) => ({ id: s.id, name: s.name.trim() }));
+    await persistSettings({ income: clamp2(inc), categories: clean, savingsCatId, subcats: cleanSubs, rollover });
+    setMsg("Saved.");
+    onDone();
+  };
+
+  const onImportFile = (e) => {
+    const file = e.target.files && e.target.files[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = async () => {
+      try {
+        await importAll(JSON.parse(reader.result));
+        setIoMsg("Backup restored.");
+      } catch (er) { setIoMsg("Restore failed: " + er.message); }
+    };
+    reader.readAsText(file);
+    e.target.value = "";
+  };
+
+  return (
+    <>
+      <div className="card">
+        <h3>{settings ? "Your split" : "Welcome — set up your split"}</h3>
+        <div style={{maxWidth:260}}>
+          <label>Monthly income (after tax)</label>
+          <input className="mono" inputMode="decimal" placeholder="4500" value={income} onChange={(e) => setIncome(e.target.value.replace(/[^0-9.]/g, ""))} />
+        </div>
+        <div style={{height:16}} />
+        <label>Categories & shares</label>
+        {rows.map((r) => (
+          <div key={r.id} className="row" style={{marginBottom:8}}>
+            <div className="grow"><input placeholder="Category name" value={r.name} onChange={(e) => setRow(r.id, {name: e.target.value})} /></div>
+            <div style={{width:90}}><input className="mono" inputMode="decimal" value={r.pct} onChange={(e) => setRow(r.id, {pct: e.target.value.replace(/[^0-9.]/g, "")})} aria-label="Percent share" /></div>
+            <span className="sub">%</span>
+            <span className="sub mono" style={{width:90, textAlign:"right"}}>{Number.isFinite(inc) ? fmt((inc * (parseFloat(r.pct) || 0)) / 100) : "—"}</span>
+            <ConfirmX onConfirm={() => setRows(rows.filter((x) => x.id !== r.id))} label="Remove category" />
+          </div>
+        ))}
+        <button className="btn ghost sm" onClick={() => setRows([...rows, { id: uid(), name: "", pct: 0 }])}>+ Add category</button>
+        <div style={{height:14}} />
+        <div className="row">
+          <div style={{maxWidth:260}}>
+            <label>Savings category</label>
+            <select value={savingsCat} onChange={(e) => setSavingsCat(e.target.value)}>
+              <option value="">None</option>
+              {rows.filter((r) => r.name.trim()).map((r) => <option key={r.id} value={r.id}>{r.name}</option>)}
+            </select>
+          </div>
+          <label style={{display:"flex", alignItems:"center", gap:8, marginTop:18, cursor:"pointer"}}>
+            <input type="checkbox" style={{width:"auto"}} checked={rollover} onChange={(e) => setRollover(e.target.checked)} />
+            Roll unspent budget into next month
+          </label>
+        </div>
+        <div style={{height:16}} />
+        <label>Subcategories</label>
+        <div className="chips" style={{marginBottom:8}}>
+          {subs.map((s) => (
+            <span key={s.id} className="chip sm" style={{display:"inline-flex", alignItems:"center", gap:4, cursor:"default"}}>
+              <input style={{border:"none", padding:0, width: Math.max(s.name.length, 4) + "ch", font:"inherit", background:"transparent"}} value={s.name}
+                onChange={(e) => setSubs(subs.map((x) => x.id === s.id ? { ...x, name: e.target.value } : x))} aria-label="Subcategory name" />
+              <button className="x" style={{fontSize:11, padding:0}} onClick={() => setSubs(subs.filter((x) => x.id !== s.id))} aria-label={`Remove ${s.name}`}>✕</button>
+            </span>
+          ))}
+          <button className="chip sm" onClick={() => setSubs([...subs, { id: uid(), name: "" }])}>+ Add</button>
+        </div>
+        <p className={sum === 100 ? "ok" : "err"} style={{marginTop:8}}>
+          Shares total {Math.round(sum * 100) / 100}%{sum === 100 ? "" : sum < 100 ? ` — ${clamp2(100 - sum)}% unassigned` : ` — ${clamp2(sum - 100)}% over-committed`}
+        </p>
+        <div className="row" style={{marginTop:10}}>
+          <button className="btn" onClick={save}>{settings ? "Save changes" : "Start budgeting"}</button>
+          {msg && <span className="sub">{msg}</span>}
+        </div>
+      </div>
+
+      {settings && (
+        <div className="card">
+          <h3>Backup</h3>
+          <div className="row" style={{marginBottom:10}}>
+            <button className="btn ghost" onClick={async () => {
+              try {
+                const { text, downloaded } = await exportAll();
+                setBackupText(text);
+                setIoMsg(downloaded ? "Backup ready below (a file download was also attempted)." : "Backup ready below — copy it and save it somewhere safe.");
+              } catch (e) { setIoMsg("Export failed: " + e.message); }
+            }}>Create backup</button>
+            {backupText && (
+              <button className="btn" onClick={async () => {
+                try { await navigator.clipboard.writeText(backupText); setIoMsg("Copied to clipboard."); }
+                catch { setIoMsg("Couldn't auto-copy — select the text below and copy manually."); }
+              }}>Copy</button>
+            )}
+            {ioMsg && <span className="sub">{ioMsg}</span>}
+          </div>
+          {backupText && (
+            <textarea readOnly value={backupText} onClick={(e) => e.target.select()}
+              style={{width:"100%", height:120, font:"12px 'IBM Plex Mono', monospace", border:"1px solid var(--line)", borderRadius:9, padding:10, resize:"vertical"}}
+              aria-label="Backup text" />
+          )}
+          <div style={{height:14}} />
+          <h3>Restore</h3>
+          <p className="sub" style={{marginBottom:8}}>Paste a backup here, or choose a file. This replaces your current data.</p>
+          <textarea value={restoreText} onChange={(e) => setRestoreText(e.target.value)} placeholder='Paste backup JSON here…'
+            style={{width:"100%", height:80, font:"12px 'IBM Plex Mono', monospace", border:"1px solid var(--line)", borderRadius:9, padding:10, resize:"vertical"}}
+            aria-label="Restore text" />
+          <div className="row" style={{marginTop:8}}>
+            <button className="btn ghost" disabled={!restoreText.trim()} onClick={async () => {
+              try { await importAll(JSON.parse(restoreText)); setIoMsg("Backup restored."); setRestoreText(""); }
+              catch (e) { setIoMsg("Restore failed: " + e.message); }
+            }}>Restore from pasted text</button>
+            <label className="btn ghost" style={{cursor:"pointer"}}>Restore from file<input type="file" accept=".json,application/json" style={{display:"none"}} onChange={onImportFile} /></label>
+          </div>
+        </div>
+      )}
+    </>
+  );
+}
+
+/* ============================ profile switcher ============================ */
+function ProfileGate() {
+  const [profiles, setProfilesState] = useState(listProfiles());
+  const [active, setActive] = useState(localStorage.getItem("sl:active") || "");
+  const [newName, setNewName] = useState("");
+
+  const choose = (name) => { localStorage.setItem("sl:active", name); setActive(name); };
+  const addProfile = () => {
+    const n = newName.trim();
+    if (!n || profiles.includes(n)) return;
+    const next = [...profiles, n];
+    saveProfiles(next); setProfilesState(next); setNewName("");
+    choose(n);
+  };
+  const switchOff = () => { localStorage.removeItem("sl:active"); setActive(""); };
+
+  if (!active) {
+    return (
+      <div className="bgt">
+        <style>{CSS}</style>
+        <div className="wrap" style={{padding:"60px 16px", maxWidth:440}}>
+          <div className="card">
+            <h3>Who's using SplitLedger?</h3>
+            <p className="sub" style={{marginBottom:14}}>Each name gets its own fully separate budget, goals, and investments on this device.</p>
+            <div className="chips" style={{marginBottom:14}}>
+              {profiles.map((p) => <button key={p} className="chip" onClick={() => choose(p)}>{p}</button>)}
+            </div>
+            <div className="row">
+              <input placeholder="Add a name" value={newName} onChange={(e) => setNewName(e.target.value)} onKeyDown={(e) => e.key === "Enter" && addProfile()} />
+              <button className="btn" onClick={addProfile}>Add & open</button>
+            </div>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  window.__ACTIVE_PROFILE__ = active;
+  return (
+    <div>
+      <div style={{position:"fixed", top:8, right:12, zIndex:40}}>
+        <button onClick={switchOff} style={{background:"rgba(22,48,43,.85)", color:"#fff", border:"none", borderRadius:8, padding:"5px 11px", font:"600 11.5px 'Public Sans',sans-serif", cursor:"pointer"}}>
+          {active} · switch
+        </button>
+      </div>
+      <BudgetApp key={active} />
+    </div>
+  );
+}
+
+ReactDOM.createRoot(document.getElementById("root")).render(<ProfileGate />);
+
+</script>
+</body>
+</html>

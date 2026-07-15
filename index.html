@@ -245,11 +245,6 @@ window.storage = {
     return { keys, prefix, shared: !!shared };
   },
 };
-function getApiKey() { return localStorage.getItem("sl:household:apiKey") || ""; }
-function setApiKey(v) { localStorage.setItem("sl:household:apiKey", v || ""); }
-function apiHeaders() {
-  return { "Content-Type": "application/json", "x-api-key": getApiKey(), "anthropic-version": "2023-06-01", "anthropic-dangerous-direct-browser-access": "true" };
-}
 function listProfiles() { try { return JSON.parse(localStorage.getItem("sl:profiles") || "[]"); } catch { return []; } }
 function saveProfiles(list) { localStorage.setItem("sl:profiles", JSON.stringify(list)); }
 
@@ -757,44 +752,8 @@ function LogTab({ cats, subcats, txns, persistTxns, rules, persistRules, addTxns
   const aiCategorize = async (rows) => {
     const need = rows.filter((r) => r.valid && !r.ignore && (!r.catId || !r.subId));
     if (!need.length) return { rows, aiNote: "" };
-    if (!getApiKey()) return { rows: rows.map((r) => (!r.valid || r.ignore || r.catId) ? r : { ...r, catId: defaultCatId }), aiNote: "No API key set — unmatched rows used your most-used category. Add a key in Setup for smarter auto-fill." };
-    try {
-      const res = await fetch("https://api.anthropic.com/v1/messages", {
-        method: "POST", headers: apiHeaders(),
-        body: JSON.stringify({
-          model: "claude-sonnet-4-6", max_tokens: 1000,
-          messages: [{ role: "user", content:
-`Categorize each bank transaction.
-Categories (pick exactly one): ${spendCats.map((c) => c.name).join(", ")}.
-Subcategories (pick the best fit, or "" if none fits): ${subcats.map((s) => s.name).join(", ")}.
-Transactions (JSON): ${JSON.stringify(need.map((r) => ({ i: r.i, desc: r.desc })))}
-Respond ONLY with a JSON array like [{"i":0,"category":"CategoryName","sub":"SubcategoryName"}] covering every transaction, using names exactly as given. No other text, no markdown.` }],
-        }),
-      });
-      if (!res.ok) throw new Error(`API ${res.status}`);
-      const data = await res.json();
-      const text = (data.content || []).map((b) => (b.type === "text" ? b.text : "")).join("");
-      const parsed = JSON.parse(text.replace(/```json|```/g, "").trim());
-      const byI = {};
-      parsed.forEach((p) => {
-        const c = spendCats.find((x) => x.name.toLowerCase() === String(p.category || "").toLowerCase());
-        const s = subcats.find((x) => x.name.toLowerCase() === String(p.sub || "").toLowerCase());
-        byI[p.i] = { c: c ? c.id : null, s: s ? s.id : "" };
-      });
-      let defaulted = 0;
-      const out = rows.map((r) => {
-        if (!r.valid || r.ignore) return r;
-        const ai = byI[r.i] || {};
-        const catFinal = r.catId || ai.c;
-        const subFinal = r.subId || ai.s || "";
-        if (!catFinal) { defaulted++; return { ...r, catId: defaultCatId, subId: subFinal }; }
-        return { ...r, catId: catFinal, subId: subFinal };
-      });
-      return { rows: out, aiNote: defaulted ? `${defaulted} row${defaulted === 1 ? "" : "s"} fell back to your most-used category — worth a look.` : "" };
-    } catch (e) {
-      const out = rows.map((r) => (!r.valid || r.ignore || r.catId) ? r : { ...r, catId: defaultCatId });
-      return { rows: out, aiNote: "Auto-categorizing was unavailable (" + e.message + "); unmatched rows were pre-filled with your most-used category." };
-    }
+    const out = rows.map((r) => (!r.valid || r.ignore || r.catId) ? r : { ...r, catId: defaultCatId });
+    return { rows: out, aiNote: `${need.length} row${need.length === 1 ? "" : "s"} used your most-used category — worth a quick check.` };
   };
 
   const onFile = (e) => {
@@ -1363,50 +1322,6 @@ function InvestTab({ invest, persistInvest, report, persistReport, nowYM }) {
   const hasHoldings = accounts.some((a) => (a.holdings || []).length);
   const portfolioDiv = accounts.map((a) => ({ t: a.name, v: latestBalance(a) })).filter((d) => d.v > 0);
 
-  const generateReport = async () => {
-    if (!getApiKey()) { setRepErr("Add your Anthropic API key in Setup to generate a report."); return; }
-    setBusy(true); setRepErr("");
-    try {
-      const portfolio = accounts.map((a) => {
-        const rows = entryRows(a);
-        const last = rows[rows.length - 1];
-        return {
-          account: a.name, accountType: a.kind, currentBalance: latestBalance(a),
-          holdings: (a.holdings || []).map((h) => ({
-            ticker: h.ticker, quantity: h.qty || 0, costBasis: h.cost || 0,
-            marketValue: holdingValue(h), boughtOn: h.buyDate, soldOn: h.sellDate,
-            heldOverOneYear: h.buyDate ? (Date.now() - new Date(h.buyDate).getTime()) > 365 * 24 * 3600 * 1000 : null,
-          })),
-          lastLoggedMonth: last ? { month: last.ym, contribution: last.contribution, gainLoss: last.gain } : null,
-        };
-      });
-      const res = await fetch("https://api.anthropic.com/v1/messages", {
-        method: "POST", headers: apiHeaders(),
-        body: JSON.stringify({
-          model: "claude-sonnet-4-6", max_tokens: 1000,
-          messages: [{ role: "user", content:
-`Here is my investment portfolio as JSON (costBasis and marketValue are dollar totals; heldOverOneYear tells you long- vs short-term status):
-${JSON.stringify(portfolio, null, 1)}
-
-First use web search to find this past week's market news relevant to my specific holdings and to markets broadly. Then write my weekly portfolio report with three parts:
-1. What happened in markets this week (brief).
-2. Which of MY holdings were likely affected, and why — name the tickers.
-3. Considerations on making moves vs. staying put, explicitly accounting for taxes given each account's type and each position's holding period: short- vs long-term capital gains in the taxable account, why moves inside 401(k)/IRA/HSA accounts have no immediate tax cost, and wash-sale rules if selling at a loss.
-
-You are not a licensed financial advisor and this is educational analysis, not directives — frame it that way and say so briefly at the end. Be specific to my actual holdings, plain text only, no markdown headers.` }],
-          tools: [{ type: "web_search_20250305", name: "web_search" }],
-        }),
-      });
-      if (!res.ok) throw new Error(`API returned ${res.status}`);
-      const data = await res.json();
-      const text = (data.content || []).map((b) => (b.type === "text" ? b.text : "")).filter(Boolean).join("\n");
-      if (!text.trim()) throw new Error("empty response");
-      await persistReport({ date: todayStr(), text });
-    } catch (e) {
-      setRepErr("Couldn't generate the report: " + e.message + ". Try again in a moment.");
-    } finally { setBusy(false); }
-  };
-
   const modalAcc = openHolding ? accounts.find((a) => a.id === openHolding.accId) : null;
   const modalHolding = modalAcc ? (modalAcc.holdings || []).find((h) => h.id === openHolding.holdingId) : null;
 
@@ -1564,27 +1479,12 @@ You are not a licensed financial advisor and this is educational analysis, not d
           </div>
         );
       })}
-
-      <div className="card">
-        <h3>Weekly market report</h3>
-        <div className="row">
-          <button className="btn" onClick={generateReport} disabled={busy || !hasHoldings}>{busy ? "Researching…" : "Generate this week's report"}</button>
-          {report && <span className="report-meta">Last report: {report.date}</span>}
-          {!hasHoldings && <span className="sub">Add tickers to an account first.</span>}
-        </div>
-        {repErr && <p className="err" style={{marginTop:10}}>{repErr}</p>}
-        {report && <div className="ai-out" style={{marginTop:14, borderTop:"1px solid var(--line)", paddingTop:12}}>{report.text}</div>}
-      </div>
     </>
   );
 }
 
 /* ============================ insights tab ============================ */
 function InsightsTab({ cats, budgets, spentBy, txns, month, income, pool, savingsCatId, savingsExtra, subcats, hist, nowYM }) {
-  const [aiText, setAiText] = useState("");
-  const [aiBusy, setAiBusy] = useState(false);
-  const [aiErr, setAiErr] = useState("");
-
   const live = txns.filter((t) => !t.excluded);
   const totalSpent = cats.reduce((s, c) => s + (spentBy[c.id] || 0), 0);
   const totalBudget = cats.reduce((s, c) => s + budgets[c.id], 0);
@@ -1658,38 +1558,6 @@ function InsightsTab({ cats, budgets, spentBy, txns, month, income, pool, saving
   });
   if (txns.length === 0 && savingsExtra === 0) insights.push({ tone: "ok", text: `Nothing logged for ${monthLabel(month)} yet.` });
 
-  const askAI = async () => {
-    if (!getApiKey()) { setAiErr("Add your Anthropic API key in Setup to use the advisor."); return; }
-    setAiBusy(true); setAiErr(""); setAiText("");
-    try {
-      const summary = {
-        month: monthLabel(month), monthlyIncome: income,
-        categories: cats.map((c) => ({ name: c.name, plannedPct: c.pct, budget: Math.round(budgets[c.id]), actualSoFar: Math.round(spentBy[c.id] || 0), isSavingsCategory: c.id === savingsCatId || undefined })),
-        monthProgressPct: Math.round(progress * 100),
-        topMerchants: top.map(([k, v]) => ({ merchant: k, total: Math.round(v) })),
-        last3MonthsByCategory: catByMonth.map((x) => ({ month: x.ym, byCategory: Object.fromEntries(cats.map((c) => [c.name, Math.round(x.m[c.id] || 0)])) })),
-        savingsPool: { balance: pool.balance, rate: pool.rate, unallocated, buckets: (pool.buckets || []).map((b) => ({ name: b.name, target: b.target, spent: b.spent, deadline: b.deadline })) },
-        transactionCount: txns.length,
-      };
-      const res = await fetch("https://api.anthropic.com/v1/messages", {
-        method: "POST", headers: apiHeaders(),
-        body: JSON.stringify({
-          model: "claude-sonnet-4-6", max_tokens: 1000,
-          messages: [{ role: "user", content:
-`You are a sharp, direct personal-finance advisor. Here is my real budget data as JSON:
-${JSON.stringify(summary, null, 1)}
-
-Give me 3-5 specific, personalized suggestions to improve, including any month-over-month trends worth acting on. Reference my actual category names, amounts, merchants, and goals — no generic advice. If something looks healthy, say so in one line and move on. Plain text only, short paragraphs, no markdown headers.` }],
-        }),
-      });
-      if (!res.ok) throw new Error(`API returned ${res.status}`);
-      const data = await res.json();
-      const text = (data.content || []).map((b) => (b.type === "text" ? b.text : "")).filter(Boolean).join("\n");
-      setAiText(text || "The advisor returned an empty response — try again.");
-    } catch (e) {
-      setAiErr("Couldn't reach the advisor: " + e.message + ".");
-    } finally { setAiBusy(false); }
-  };
 
   return (
     <>
@@ -1698,12 +1566,6 @@ Give me 3-5 specific, personalized suggestions to improve, including any month-o
         {insights.map((ins, i) => (
           <div key={i} className={"insight" + (ins.tone === "warn" ? " warn" : ins.tone === "gold" ? " gold" : "")}>{ins.text}</div>
         ))}
-      </div>
-      <div className="card">
-        <h3>Ask the advisor</h3>
-        <button className="btn" onClick={askAI} disabled={aiBusy || (txns.length === 0 && savingsExtra === 0)}>{aiBusy ? "Thinking…" : "Get personalized advice"}</button>
-        {aiErr && <p className="err" style={{marginTop:10}}>{aiErr}</p>}
-        {aiText && <div className="ai-out" style={{marginTop:14, borderTop:"1px solid var(--line)", paddingTop:12}}>{aiText}</div>}
       </div>
     </>
   );
@@ -1812,17 +1674,6 @@ function SetupTab({ settings, persistSettings, pool, invest, hist, nowYM, export
 
       {settings && (
         <div className="card">
-          <h3>AI features</h3>
-          <p className="sub" style={{marginBottom:8}}>Add your own Anthropic API key to enable auto-categorization, the advisor, market reports, and check-ins. Stored only in this browser — calls go straight from your device to Anthropic and are billed to your account. Leave blank to use the app with manual entry only.</p>
-          <div className="row">
-            <input type="password" style={{maxWidth:340}} placeholder="sk-ant-…" defaultValue={getApiKey()} onBlur={(e) => setApiKey(e.target.value.trim())} aria-label="Anthropic API key" />
-            <span className="sub">Get a key at console.anthropic.com</span>
-          </div>
-        </div>
-      )}
-
-      {settings && (
-        <div className="card">
           <h3>Backup</h3>
           <div className="row" style={{marginBottom:10}}>
             <button className="btn ghost" onClick={async () => {
@@ -1860,132 +1711,7 @@ function SetupTab({ settings, persistSettings, pool, invest, hist, nowYM, export
           </div>
         </div>
       )}
-
-      {settings && <CheckIn {...{settings, pool, invest, hist, nowYM, applyProposal}} />}
     </>
-  );
-}
-
-/* ============================ financial check-in ============================ */
-function CheckIn({ settings, pool, invest, hist, nowYM, applyProposal }) {
-  const [stage, setStage] = useState("idle"); // idle | asking | questions | thinking | result
-  const [questions, setQuestions] = useState([]);
-  const [answers, setAnswers] = useState({});
-  const [result, setResult] = useState(null); // {reflection, proposals}
-  const [applied, setApplied] = useState({});
-  const [err, setErr] = useState("");
-
-  const buildContext = () => {
-    const months = [3, 2, 1].map((i) => shiftMonth(nowYM, -i)).filter((ym) => hist[ym] !== undefined);
-    return {
-      monthlyIncome: settings.income,
-      categories: settings.categories.map((c) => ({ name: c.name, pct: c.pct })),
-      recentSpendByMonth: months.map((ym) => ({
-        month: ym,
-        total: clamp2((hist[ym] || []).reduce((s, t) => s + (t.excluded ? 0 : t.amount), 0)),
-      })),
-      savingsPool: { balance: pool.balance, rate: pool.rate, buckets: (pool.buckets || []).map((b) => ({ name: b.name, target: b.target, spent: b.spent, deadline: b.deadline })) },
-      investAccounts: (invest.accounts || []).map((a) => ({ name: a.name, kind: a.kind, monthlyTarget: a.monthlyTarget })),
-    };
-  };
-
-  const callAI = async (content) => {
-    const res = await fetch("https://api.anthropic.com/v1/messages", {
-      method: "POST", headers: apiHeaders(),
-      body: JSON.stringify({ model: "claude-sonnet-4-6", max_tokens: 1000, messages: [{ role: "user", content }] }),
-    });
-    if (!res.ok) throw new Error(`API ${res.status}`);
-    const data = await res.json();
-    return (data.content || []).map((b) => (b.type === "text" ? b.text : "")).join("");
-  };
-
-  const start = async () => {
-    if (!getApiKey()) { setErr("Add your Anthropic API key in Setup to use the check-in."); return; }
-    setStage("asking"); setErr("");
-    try {
-      const text = await callAI(
-`You are a personal-finance coach doing a periodic check-in. Here is my financial setup and recent activity as JSON:
-${JSON.stringify(buildContext(), null, 1)}
-
-Ask me exactly 3 short, sharp questions about how my finances, goals, or ambitions have changed — questions whose answers would let you suggest concrete adjustments to my income figure, category percentages, or savings rate. Respond ONLY with JSON: {"questions":["q1","q2","q3"]}. No other text, no markdown.`);
-      const parsed = JSON.parse(text.replace(/```json|```/g, "").trim());
-      if (!Array.isArray(parsed.questions) || !parsed.questions.length) throw new Error("bad question format");
-      setQuestions(parsed.questions.slice(0, 3));
-      setAnswers({});
-      setStage("questions");
-    } catch (e) { setErr("Couldn't start the check-in: " + e.message); setStage("idle"); }
-  };
-
-  const submit = async () => {
-    setStage("thinking"); setErr("");
-    try {
-      const qa = questions.map((q, i) => ({ question: q, answer: answers[i] || "(no answer)" }));
-      const text = await callAI(
-`You are a personal-finance coach. My setup and recent activity:
-${JSON.stringify(buildContext(), null, 1)}
-
-My answers to your check-in questions:
-${JSON.stringify(qa, null, 1)}
-
-Write a short reflection (a few sentences, direct and specific) and propose 0-3 concrete setting changes. Allowed proposal kinds ONLY:
-- {"kind":"income","value":number,"label":"why"} — update monthly income
-- {"kind":"categoryPct","catName":"<exact category name>","value":number,"label":"why"} — change a category's percentage
-- {"kind":"poolRate","value":number,"label":"why"} — update the savings pool APY
-Respond ONLY with JSON: {"reflection":"...","proposals":[...]}. Propose nothing if nothing should change. No other text, no markdown.`);
-      const parsed = JSON.parse(text.replace(/```json|```/g, "").trim());
-      setResult({ reflection: parsed.reflection || "", proposals: Array.isArray(parsed.proposals) ? parsed.proposals.slice(0, 3) : [] });
-      setApplied({});
-      setStage("result");
-    } catch (e) { setErr("Check-in failed: " + e.message); setStage("questions"); }
-  };
-
-  return (
-    <div className="card">
-      <h3>Financial check-in</h3>
-      {stage === "idle" && (
-        <div className="row">
-          <button className="btn gold" onClick={start}>Start a check-in</button>
-          <span className="sub">Reads your recent data, asks 3 questions, proposes changes you approve one by one.</span>
-        </div>
-      )}
-      {stage === "asking" && <p className="sub">Preparing questions…</p>}
-      {stage === "questions" && (
-        <>
-          {questions.map((q, i) => (
-            <div key={i} style={{marginBottom:12}}>
-              <label>{q}</label>
-              <input value={answers[i] || ""} onChange={(e) => setAnswers({...answers, [i]: e.target.value})} placeholder="Your answer" />
-            </div>
-          ))}
-          <div className="row">
-            <button className="btn" onClick={submit}>Submit answers</button>
-            <button className="btn ghost" onClick={() => setStage("idle")}>Cancel</button>
-          </div>
-        </>
-      )}
-      {stage === "thinking" && <p className="sub">Thinking it through…</p>}
-      {stage === "result" && result && (
-        <>
-          <div className="ai-out" style={{marginBottom:12}}>{result.reflection}</div>
-          {result.proposals.length === 0 && <p className="sub">No setting changes proposed — things look aligned.</p>}
-          {result.proposals.map((p, i) => (
-            <div key={i} className="proposal">
-              <span className="grow">
-                <b>{p.kind === "income" ? `Set income to ${fmt(p.value)}` : p.kind === "categoryPct" ? `Set ${p.catName} to ${p.value}%` : `Set pool APY to ${p.value}%`}</b>
-                {p.label ? ` — ${p.label}` : ""}
-              </span>
-              {applied[i] ? <span className="ok">Applied</span> : (
-                <button className="btn sm" onClick={async () => { await applyProposal(p); setApplied({...applied, [i]: true}); }}>Approve</button>
-              )}
-            </div>
-          ))}
-          <div className="row" style={{marginTop:10}}>
-            <button className="btn ghost sm" onClick={() => setStage("idle")}>Done</button>
-          </div>
-        </>
-      )}
-      {err && <p className="err" style={{marginTop:8}}>{err}</p>}
-    </div>
   );
 }
 
